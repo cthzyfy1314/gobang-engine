@@ -1,0 +1,35 @@
+# MSVC build artifacts
+build/
+*.obj
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.exe
+
+# Visual Studio
+.vs/
+*.vcxproj.user
+*.suo
+
+# VS Code
+.vscode/
+
+# Runtime data
+data/replays/
+data/*.txt
+data/*.log
+
+# OS
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# Python (for any helper scripts)
+__pycache__/
+*.pyc
+.venv/
+
+# Backup
+*~
+*.bak
