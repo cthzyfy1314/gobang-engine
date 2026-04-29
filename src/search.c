@@ -25,10 +25,43 @@ int search_evaluate(const Board *b) {
     return (b->side_to_move == BLACK) ? diff : -diff;
 }
 
-/* 占位实现，后续 task 完整实现 */
 int search_generate_neighbor_moves(const Board *b, Move *out) {
-    (void)b; (void)out;
-    return 0;
+    if (b->move_count == 0) {
+        out[0].row = 7;
+        out[0].col = 7;
+        out[0].color = (int8_t)b->side_to_move;
+        return 1;
+    }
+
+    /* "邻近 2 圈"标记表 */
+    uint8_t mark[BOARD_SIZE][BOARD_SIZE] = {{0}};
+
+    for (int r = 0; r < BOARD_SIZE; r++) {
+        for (int c = 0; c < BOARD_SIZE; c++) {
+            if (b->cells[r][c] == EMPTY) continue;
+            for (int dr = -2; dr <= 2; dr++) {
+                for (int dc = -2; dc <= 2; dc++) {
+                    int nr = r + dr, nc = c + dc;
+                    if (!board_in_bounds(nr, nc)) continue;
+                    if (b->cells[nr][nc] != EMPTY) continue;
+                    mark[nr][nc] = 1;
+                }
+            }
+        }
+    }
+
+    int count = 0;
+    for (int r = 0; r < BOARD_SIZE; r++) {
+        for (int c = 0; c < BOARD_SIZE; c++) {
+            if (mark[r][c] && count < SEARCH_MAX_MOVES) {
+                out[count].row = (int8_t)r;
+                out[count].col = (int8_t)c;
+                out[count].color = (int8_t)b->side_to_move;
+                count++;
+            }
+        }
+    }
+    return count;
 }
 
 SearchResult search_best_move(Board *b, int depth) {
