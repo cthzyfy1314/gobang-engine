@@ -59,11 +59,46 @@ static void test_generate_corner_stone(void) {
     ASSERT_EQ(n, 8, "generate: corner stone -> 3x3-1 = 8 neighbors");
 }
 
+static void test_search_returns_legal_move(void) {
+    Board b; board_init(&b);
+    b.cells[7][7] = BLACK; b.move_count = 1; b.side_to_move = WHITE;
+    SearchResult r = search_best_move(&b, 2);
+    ASSERT_TRUE(board_in_bounds(r.best_move.row, r.best_move.col),
+                "search: returns in-bounds move");
+    ASSERT_EQ(b.cells[r.best_move.row][r.best_move.col], EMPTY,
+              "search: returns empty cell");
+}
+
+static void test_search_finds_immediate_win(void) {
+    /* 黑方 4 连，下一步必胜 */
+    Board b; board_init(&b);
+    b.cells[7][3] = BLACK;
+    b.cells[7][4] = BLACK;
+    b.cells[7][5] = BLACK;
+    b.cells[7][6] = BLACK;
+    b.move_count = 4;
+    b.side_to_move = BLACK;
+
+    SearchResult r = search_best_move(&b, 1);
+    int found_winning = (r.best_move.row == 7 && (r.best_move.col == 7 || r.best_move.col == 2));
+    ASSERT_TRUE(found_winning, "search: finds winning move at (7,2) or (7,7)");
+}
+
+static void test_search_nodes_counted(void) {
+    Board b; board_init(&b);
+    b.cells[7][7] = BLACK; b.move_count = 1; b.side_to_move = WHITE;
+    SearchResult r = search_best_move(&b, 2);
+    ASSERT_TRUE(r.nodes_searched > 0, "search: nodes_searched > 0");
+}
+
 int main(void) {
     test_evaluate_empty();
     test_evaluate_center_better_than_corner();
     test_generate_empty_board();
     test_generate_one_stone();
     test_generate_corner_stone();
+    test_search_returns_legal_move();
+    test_search_finds_immediate_win();
+    test_search_nodes_counted();
     TEST_REPORT("test_search");
 }
