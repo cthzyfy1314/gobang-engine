@@ -39,8 +39,60 @@ bool board_undo(Board *b) {
     return true;
 }
 
+/* 给定起点 (r,c) 和方向 (dr,dc)，统计沿该方向 color 的最长连续子数。
+ * 包括起点本身（如果起点是 color）。
+ */
+static int count_run(const Board *b, int r, int c, int dr, int dc, int color) {
+    int count = 0;
+    while (board_in_bounds(r, c) && b->cells[r][c] == (uint8_t)color) {
+        count++;
+        r += dr;
+        c += dc;
+    }
+    return count;
+}
+
+/* 对每个 cells[r][c]==color 的格子，沿 4 方向（向后）看最长连子。
+ * 只从一段的"起点"开始计数（前一格不是同色），避免重复。
+ */
+static int max_run_for_color(const Board *b, int color) {
+    int max_run = 0;
+    static const int dirs[4][2] = { {0,1}, {1,0}, {1,1}, {1,-1} };
+    for (int r = 0; r < BOARD_SIZE; r++) {
+        for (int c = 0; c < BOARD_SIZE; c++) {
+            if (b->cells[r][c] != (uint8_t)color) continue;
+            for (int d = 0; d < 4; d++) {
+                int dr = dirs[d][0], dc = dirs[d][1];
+                int prev_r = r - dr, prev_c = c - dc;
+                if (board_in_bounds(prev_r, prev_c) &&
+                    b->cells[prev_r][prev_c] == (uint8_t)color) {
+                    continue;
+                }
+                int run = count_run(b, r, c, dr, dc, color);
+                if (run > max_run) max_run = run;
+            }
+        }
+    }
+    return max_run;
+}
+
 GameResult board_check_winner(const Board *b) {
-    (void)b;
+    int black_max = max_run_for_color(b, BLACK);
+    int white_max = max_run_for_color(b, WHITE);
+
+    /* 国规不对称（Spec § 1.4 国规 9.1）：
+     *   白 ≥5 连（含长连）→ 白胜
+     *   黑 ==5 连 → 黑胜
+     *   黑 ≥6 连（长连禁手）→ 白胜
+     *   全盘满 → 和棋
+     *
+     * Day 1 暂不处理"黑五连+禁手同时形成→五连优先"细节，
+     * 那是 forbid 模块的事（Spec § 3.4 + § 1.4 国规 9.2-c）。
+     */
+    if (white_max >= 5) return RESULT_WHITE_WIN_NORMAL;
+    if (black_max == 5) return RESULT_BLACK_WIN;
+    if (black_max >= 6) return RESULT_WHITE_WIN_NORMAL;
+    if (board_is_full(b)) return RESULT_DRAW;
     return RESULT_NONE;
 }
 

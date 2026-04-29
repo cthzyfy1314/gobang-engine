@@ -84,6 +84,77 @@ static void test_board_is_full(void) {
     ASSERT_EQ(b.move_count, 225, "is_full: move_count == 225");
 }
 
+/* 辅助：水平连续放 count 个 color 棋子，从 (start_r, start_c) 开始。
+ * 直接改 cells，避开 place 的 turn-switching 逻辑，方便构造任意局面。
+ */
+static void place_horizontal_run(Board *b, int start_r, int start_c, int count, int color) {
+    for (int i = 0; i < count; i++) {
+        b->cells[start_r][start_c + i] = (uint8_t)color;
+    }
+    b->move_count += (uint16_t)count;
+}
+
+static void test_winner_none_on_empty(void) {
+    Board b; board_init(&b);
+    ASSERT_EQ(board_check_winner(&b), RESULT_NONE, "winner: empty board = none");
+}
+
+static void test_winner_black_5_horizontal(void) {
+    Board b; board_init(&b);
+    place_horizontal_run(&b, 7, 5, 5, BLACK);
+    ASSERT_EQ(board_check_winner(&b), RESULT_BLACK_WIN, "winner: black 5-in-row = BLACK_WIN");
+}
+
+static void test_winner_black_6_overline_negative(void) {
+    /* 国规 8 + 9.1：黑 6 连（长连）= 黑负 = 白胜 */
+    Board b; board_init(&b);
+    place_horizontal_run(&b, 7, 5, 6, BLACK);
+    ASSERT_EQ(board_check_winner(&b), RESULT_WHITE_WIN_NORMAL,
+              "winner: black 6-in-row (overline) = WHITE_WIN");
+}
+
+static void test_winner_white_5(void) {
+    Board b; board_init(&b);
+    place_horizontal_run(&b, 7, 5, 5, WHITE);
+    ASSERT_EQ(board_check_winner(&b), RESULT_WHITE_WIN_NORMAL, "winner: white 5 = WHITE_WIN");
+}
+
+static void test_winner_white_6_overline_still_win(void) {
+    /* 国规 9.1：白长连视同五连，白方仍胜 */
+    Board b; board_init(&b);
+    place_horizontal_run(&b, 7, 5, 6, WHITE);
+    ASSERT_EQ(board_check_winner(&b), RESULT_WHITE_WIN_NORMAL,
+              "winner: white 6-in-row = WHITE_WIN (long connect counts as 5)");
+}
+
+static void test_winner_diagonal(void) {
+    Board b; board_init(&b);
+    for (int i = 0; i < 5; i++) b.cells[3 + i][3 + i] = BLACK;
+    b.move_count = 5;
+    ASSERT_EQ(board_check_winner(&b), RESULT_BLACK_WIN, "winner: diagonal black 5 = BLACK_WIN");
+}
+
+static void test_winner_anti_diagonal(void) {
+    Board b; board_init(&b);
+    for (int i = 0; i < 5; i++) b.cells[3 + i][10 - i] = WHITE;
+    b.move_count = 5;
+    ASSERT_EQ(board_check_winner(&b), RESULT_WHITE_WIN_NORMAL,
+              "winner: anti-diagonal white 5 = WHITE_WIN");
+}
+
+static void test_winner_vertical(void) {
+    Board b; board_init(&b);
+    for (int i = 0; i < 5; i++) b.cells[5 + i][7] = BLACK;
+    b.move_count = 5;
+    ASSERT_EQ(board_check_winner(&b), RESULT_BLACK_WIN, "winner: vertical black 5 = BLACK_WIN");
+}
+
+static void test_winner_4_in_row_no_win(void) {
+    Board b; board_init(&b);
+    place_horizontal_run(&b, 7, 5, 4, BLACK);
+    ASSERT_EQ(board_check_winner(&b), RESULT_NONE, "winner: only 4 in row = no win");
+}
+
 int main(void) {
     test_board_init();
     test_board_in_bounds();
@@ -92,5 +163,14 @@ int main(void) {
     test_board_undo();
     test_board_place_undo_idempotent();
     test_board_is_full();
+    test_winner_none_on_empty();
+    test_winner_black_5_horizontal();
+    test_winner_black_6_overline_negative();
+    test_winner_white_5();
+    test_winner_white_6_overline_still_win();
+    test_winner_diagonal();
+    test_winner_anti_diagonal();
+    test_winner_vertical();
+    test_winner_4_in_row_no_win();
     TEST_REPORT("test_board");
 }
