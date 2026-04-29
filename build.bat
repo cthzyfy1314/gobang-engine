@@ -38,10 +38,14 @@ cl /W3 /TC /utf-8 /nologo /Fe:test_board.exe /Fo:build\ ^
    src\board.c tests\test_board.c
 if errorlevel 1 ( echo [ERROR] test_board build failed & exit /b 1 )
 
-rem 后续 task 9 之后会加 test_search.exe
+echo Building test_search.exe...
+cl /W3 /TC /utf-8 /nologo /Fe:test_search.exe /Fo:build\ ^
+   src\board.c src\search.c tests\test_search.c
+if errorlevel 1 ( echo [ERROR] test_search build failed & exit /b 1 )
 
 echo.
 echo [OK] build complete.
 echo Run:
 echo   gobang-engine.exe
 echo   test_board.exe
+echo   test_search.exe
