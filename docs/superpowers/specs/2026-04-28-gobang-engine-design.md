@@ -490,9 +490,9 @@ OpeningEntry openings[26];
 
 | 日期 | 上午 | 下午 / 晚上 | 当日完成模块 |
 |------|------|--------|-------------|
-| **4/28 周二（今日）** | spec 写完 + 自检 + 用户审 | 建仓 push GitHub + 抄井字棋脚手架 + board.c 起手 | 项目骨架 |
-| **4/29 周三** | board.c/.h 完成 + 单元测试 | search.c/.h 框架（αβ + 邻近 2 圈） | board, search 框架 |
-| **4/30 周四** | pattern.c/.h（抄 xl-engine 棋型表）| pattern + search 联调 → **第一次能自我对战** | pattern, search v1 |
+| ✅ **4/28 周二** | spec 写完 + 自检 + 用户审 | 建仓 push GitHub + scaffold + main.c stub + test_runner.h + board.h | 项目骨架（commit `5336d69` → `0c93481`）|
+| ✅ **4/29 周三** | board.c/.h 完成 + 单元测试（45 PASS）| search.c/.h 框架（αβ + 邻近 2 圈，12 PASS）+ self-play demo | board, search 框架（tag `m1-prep-day1`）|
+| **4/30 周四（今日）** | pattern.c/.h（抄 xl-engine 棋型表）| pattern + search 联调 → **第一次能自我对战** | pattern, search v1 |
 | **5/1 周五（酒店晚）** | — | zobrist.c/.h（哈希 + 置换表）| zobrist |
 | **5/2 周六（酒店晚）** | — | 迭代加深 + Killer Move + History Heuristic | search v2 |
 | **5/3 周日（酒店晚）** | — | forbid.c/.h 起手（长连禁手 + 四四禁手）| forbid 部分 |

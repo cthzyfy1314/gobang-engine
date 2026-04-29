@@ -1,5 +1,7 @@
 # Day 1 (4/29): Board + Search Framework Implementation Plan
 
+> ✅ **STATUS: DONE 2026-04-29** — tag `m1-prep-day1` pushed. 45/45 board + 12/12 search tests pass. Self-play demo runs.
+>
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 在 1 个工作日内完成 `board.c/.h`（含国规不对称胜负判定）+ `search.c/.h` 框架（含 αβ 剪枝 + 邻近 2 圈剪枝 + placeholder 评估），让项目能跑出"虽然棋力弱但功能正确"的最小自我对战。
