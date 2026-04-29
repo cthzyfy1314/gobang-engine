@@ -68,6 +68,22 @@ static void test_board_place_undo_idempotent(void) {
     ASSERT_EQ(b.side_to_move, snap.side_to_move, "round-trip: side");
 }
 
+static void test_board_is_full(void) {
+    Board b; board_init(&b);
+    ASSERT_FALSE(board_is_full(&b), "is_full: empty board not full");
+
+    /* 填满整个棋盘（225 格） */
+    int color = BLACK;
+    for (int r = 0; r < BOARD_SIZE; r++) {
+        for (int c = 0; c < BOARD_SIZE; c++) {
+            board_place(&b, r, c, color);
+            color = (color == BLACK) ? WHITE : BLACK;
+        }
+    }
+    ASSERT_TRUE(board_is_full(&b), "is_full: 225 stones placed");
+    ASSERT_EQ(b.move_count, 225, "is_full: move_count == 225");
+}
+
 int main(void) {
     test_board_init();
     test_board_in_bounds();
@@ -75,5 +91,6 @@ int main(void) {
     test_board_place_invalid();
     test_board_undo();
     test_board_place_undo_idempotent();
+    test_board_is_full();
     TEST_REPORT("test_board");
 }

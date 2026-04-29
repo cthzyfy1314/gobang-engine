@@ -45,6 +45,5 @@ GameResult board_check_winner(const Board *b) {
 }
 
 bool board_is_full(const Board *b) {
-    (void)b;
-    return false;
+    return b->move_count >= (uint16_t)(BOARD_SIZE * BOARD_SIZE);
 }
