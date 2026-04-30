@@ -44,6 +44,54 @@ void search_reset(void) {
     clear_search_state();
 }
 
+int search_find_n_distinct(Board *b, int depth, int n_want, Move *out, int *out_scores) {
+    /* 入口同步 hash，清搜索状态 */
+    b->zobrist_hash = zobrist_compute(b);
+    tt_clear();
+    clear_search_state();
+
+    Move moves[SEARCH_MAX_MOVES];
+    int n = search_generate_neighbor_moves(b, moves);
+    if (n == 0) return 0;
+
+    /* 对每个候选 move 在固定深度搜索得分 */
+    int scores[SEARCH_MAX_MOVES];
+    long nodes_dummy = 0;
+    int valid_n = 0;
+    int valid_idx[SEARCH_MAX_MOVES];
+
+    int alpha = -SEARCH_INF, beta = SEARCH_INF;
+    for (int i = 0; i < n; i++) {
+        int color = b->side_to_move;
+        if (color == BLACK && b->forbid_enabled) {
+            if (forbid_check_black(b, moves[i].row, moves[i].col) != FORBID_NONE) continue;
+        }
+        if (!board_place(b, moves[i].row, moves[i].col, color)) continue;
+        int score = -alphabeta(b, 1, depth - 1, -beta, -alpha, &nodes_dummy);
+        board_undo(b);
+        scores[valid_n] = score;
+        valid_idx[valid_n] = i;
+        valid_n++;
+    }
+
+    /* 按 score 降序选前 n_want，输出位置 */
+    int picked = 0;
+    int used[SEARCH_MAX_MOVES] = {0};
+    while (picked < n_want && picked < valid_n) {
+        int best = -1;
+        for (int i = 0; i < valid_n; i++) {
+            if (used[i]) continue;
+            if (best == -1 || scores[i] > scores[best]) best = i;
+        }
+        if (best == -1) break;
+        used[best] = 1;
+        out[picked] = moves[valid_idx[best]];
+        if (out_scores) out_scores[picked] = scores[best];
+        picked++;
+    }
+    return picked;
+}
+
 /* 4/30 起：转发给 pattern_evaluate（替换 4/29 的中央倾向 placeholder） */
 int search_evaluate(const Board *b) {
     return pattern_evaluate(b);

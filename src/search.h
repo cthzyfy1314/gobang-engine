@@ -40,4 +40,10 @@ int search_generate_neighbor_moves(const Board *b, Move *out);
 /* 重置搜索状态（清 TT + killer + history）。新游戏开始时调用。 */
 void search_reset(void);
 
+/* 五手 N 打（国规 7）：返回 n_want 个不同位置候选着子，按当前 side_to_move 视角分数降序。
+ * 简化版：不做严格"不同形"对称变换匹配——只保证位置不同。
+ * out 容量需 ≥ n_want；返回实际填入数（≤ n_want，受合法 move 数限制）。
+ */
+int search_find_n_distinct(Board *b, int depth, int n_want, Move *out, int *out_scores);
+
 #endif /* SEARCH_H_ */
