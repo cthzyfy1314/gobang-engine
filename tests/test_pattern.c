@@ -125,6 +125,36 @@ static void test_dead_three(void) {
     ASSERT_EQ(s.counts[PAT_SLEEP_THREE], 0, "dead_three: not sleep");
 }
 
+static void test_open_two(void) {
+    int8_t line[16]; PatternStats s = {0};
+    int n = build_line("___XX___", line);
+    pattern_count_in_line(line, n, 1, &s);
+    ASSERT_EQ(s.counts[PAT_OPEN_TWO], 1, "open_two: ___XX___ -> OPEN_TWO x1");
+}
+
+static void test_sleep_two_blocked(void) {
+    int8_t line[16]; PatternStats s = {0};
+    int n = build_line("OXX___", line);
+    pattern_count_in_line(line, n, 1, &s);
+    ASSERT_EQ(s.counts[PAT_SLEEP_TWO], 1, "sleep_two: OXX___ -> SLEEP_TWO x1");
+}
+
+static void test_dead_two(void) {
+    int8_t line[16]; PatternStats s = {0};
+    int n = build_line("OXXO", line);
+    pattern_count_in_line(line, n, 1, &s);
+    ASSERT_EQ(s.counts[PAT_OPEN_TWO], 0, "dead_two: not open");
+    ASSERT_EQ(s.counts[PAT_SLEEP_TWO], 0, "dead_two: not sleep");
+}
+
+static void test_single_stone_no_pattern(void) {
+    int8_t line[16]; PatternStats s = {0};
+    int n = build_line("__X__", line);
+    pattern_count_in_line(line, n, 1, &s);
+    ASSERT_EQ(s.counts[PAT_OPEN_TWO], 0, "single: not OPEN_TWO");
+    ASSERT_EQ(s.counts[PAT_SLEEP_TWO], 0, "single: not SLEEP_TWO");
+}
+
 int main(void) {
     test_five_isolated();
     test_five_at_edge();
@@ -140,5 +170,9 @@ int main(void) {
     test_sleep_three_blocked();
     test_sleep_three_at_edge();
     test_dead_three();
+    test_open_two();
+    test_sleep_two_blocked();
+    test_dead_two();
+    test_single_stone_no_pattern();
     TEST_REPORT("test_pattern");
 }
