@@ -116,7 +116,7 @@ static void show_engine_suggestion(Board *b, int depth) {
     if (b->side_to_move == BLACK && b->forbid_enabled) {
         ForbidType ft = forbid_check_black(b, r.best_move.row, r.best_move.col);
         if (ft != FORBID_NONE) {
-            printf("    [warn] suggestion is FORBID (search bug?) — please report.\n");
+            printf("    [warn] suggestion is FORBID (search bug?) -- please report.\n");
         }
     }
 }
@@ -395,11 +395,11 @@ void ui_main_loop(int my_color, int search_depth) {
     Board b;
     board_init(&b);
 
-    printf("=== gobang-engine — Renju (national rules) ===\n");
+    printf("=== gobang-engine -- Renju (national rules) ===\n");
     printf("AI plays:        %s\n", my_color == BLACK ? "BLACK (X)" : "WHITE (O)");
     printf("You relay for:   %s (the opponent)\n", my_color == BLACK ? "WHITE (O)" : "BLACK (X)");
     printf("Search depth:    %d\n", search_depth);
-    printf("Flow follows spec § 6 phases 0-5: opening / swap / W4 / N-strikes / loop.\n");
+    printf("Flow follows spec section 6 phases 0-5: opening / swap / W4 / N-strikes / loop.\n");
 
     /* 阶段 1：开局 (3 手 + N) */
     int N = 5;
@@ -432,7 +432,7 @@ void ui_main_loop(int my_color, int search_depth) {
     }
 
     /* 阶段 5：正常对局循环 */
-    printf("\n=== Phase 5: regular play (national rule 8/9 — forbid + win check) ===\n");
+    printf("\n=== Phase 5: regular play (national rule 8/9 -- forbid + win check) ===\n");
     while (1) {
         res = board_check_winner(&b);
         if (res != RESULT_NONE) {

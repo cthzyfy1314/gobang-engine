@@ -8,6 +8,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 #include "board.h"
 #include "search.h"
 #include "zobrist.h"
@@ -43,6 +46,12 @@ static void run_demo(int depth) {
 }
 
 int main(int argc, char **argv) {
+#ifdef _WIN32
+    /* Windows console 默认 GBK (codepage 936) → 源码中的 UTF-8 字符乱码。
+     * 切到 UTF-8 (65001)。如果切换失败也无伤大雅（程序输出已尽量 ASCII-safe）。
+     */
+    SetConsoleOutputCP(65001);
+#endif
     zobrist_init();
 
     int my_color = BLACK;

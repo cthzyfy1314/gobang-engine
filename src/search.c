@@ -44,6 +44,9 @@ void search_reset(void) {
     clear_search_state();
 }
 
+/* forward decl — alphabeta 定义在文件后面 */
+static int alphabeta(Board *b, int ply, int depth_left, int alpha, int beta, long *nodes);
+
 int search_find_n_distinct(Board *b, int depth, int n_want, Move *out, int *out_scores) {
     /* 入口同步 hash，清搜索状态 */
     b->zobrist_hash = zobrist_compute(b);
