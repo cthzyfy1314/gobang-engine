@@ -2,6 +2,7 @@
 #include <string.h>
 #include "test_runner.h"
 #include "../src/board.h"
+#include "../src/zobrist.h"
 
 static void test_board_init(void) {
     Board b;
@@ -155,7 +156,23 @@ static void test_winner_4_in_row_no_win(void) {
     ASSERT_EQ(board_check_winner(&b), RESULT_NONE, "winner: only 4 in row = no win");
 }
 
+static void test_board_zobrist_round_trip(void) {
+    /* place + undo 后 zobrist_hash 应回到 0 */
+    Board b; board_init(&b);
+    ASSERT_EQ((int)(b.zobrist_hash == 0), 1, "zobrist: init hash = 0");
+    board_place(&b, 7, 7, BLACK);
+    ASSERT_TRUE(b.zobrist_hash != 0, "zobrist: place changes hash");
+    uint64_t h_after_first = b.zobrist_hash;
+    board_place(&b, 7, 8, WHITE);
+    ASSERT_TRUE(b.zobrist_hash != h_after_first, "zobrist: 2nd place changes hash again");
+    board_undo(&b);
+    ASSERT_TRUE(b.zobrist_hash == h_after_first, "zobrist: undo restores prior hash");
+    board_undo(&b);
+    ASSERT_EQ((int)(b.zobrist_hash == 0), 1, "zobrist: full undo returns to 0");
+}
+
 int main(void) {
+    zobrist_init();
     test_board_init();
     test_board_in_bounds();
     test_board_place_basic();
@@ -172,5 +189,6 @@ int main(void) {
     test_winner_anti_diagonal();
     test_winner_vertical();
     test_winner_4_in_row_no_win();
+    test_board_zobrist_round_trip();
     TEST_REPORT("test_board");
 }

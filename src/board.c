@@ -2,6 +2,7 @@
 #define _CRT_SECURE_NO_WARNINGS
 #include <string.h>
 #include "board.h"
+#include "zobrist.h"
 
 void board_init(Board *b) {
     memset(b->cells, EMPTY, sizeof(b->cells));
@@ -27,6 +28,10 @@ bool board_place(Board *b, int row, int col, int color) {
     b->history[b->move_count].color = (int8_t)color;
     b->move_count++;
     b->side_to_move = (color == BLACK) ? WHITE : BLACK;
+
+    /* Zobrist 增量更新 */
+    b->zobrist_hash = zobrist_xor_piece(b->zobrist_hash, row, col, color);
+    b->zobrist_hash = zobrist_xor_side(b->zobrist_hash);
     return true;
 }
 
@@ -34,6 +39,11 @@ bool board_undo(Board *b) {
     if (b->move_count == 0) return false;
     b->move_count--;
     Move *m = &b->history[b->move_count];
+
+    /* Zobrist 增量更新（XOR 自反） */
+    b->zobrist_hash = zobrist_xor_piece(b->zobrist_hash, m->row, m->col, m->color);
+    b->zobrist_hash = zobrist_xor_side(b->zobrist_hash);
+
     b->cells[m->row][m->col] = EMPTY;
     b->side_to_move = m->color;   /* 撤销后下一个轮到的还是当时落子那方 */
     return true;
