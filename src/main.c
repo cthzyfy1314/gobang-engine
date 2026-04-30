@@ -28,10 +28,12 @@ int main(void) {
     Board b;
     board_init(&b);
 
-    printf("gobang-engine self-play demo (10 plies, depth=2)\n\n");
+    printf("gobang-engine self-play demo (10 plies, depth=3 with TT)\n\n");
 
+    long total_nodes = 0;
     for (int ply = 0; ply < 10; ply++) {
-        SearchResult r = search_best_move(&b, 2);
+        SearchResult r = search_best_move(&b, 3);
+        total_nodes += r.nodes_searched;
         if (r.best_move.row < 0) {
             printf("No legal move. Stopping.\n");
             break;
@@ -51,6 +53,6 @@ int main(void) {
     }
 
     print_board_minimal(&b);
-    printf("[Demo finished -- 10 plies, no winner yet]\n");
+    printf("[Demo finished -- 10 plies, total nodes searched = %ld]\n", total_nodes);
     return 0;
 }
