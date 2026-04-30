@@ -9,22 +9,23 @@ static void test_evaluate_empty(void) {
     ASSERT_EQ(score, 0, "evaluate: empty board score = 0");
 }
 
-static void test_evaluate_center_better_than_corner(void) {
-    /* 黑下中央 vs 黑下角落，从白方视角，中央对白更不利 */
+static void test_evaluate_open_three_beats_dead_three(void) {
+    /* 活三应比死三分高（pattern evaluator 不再做中央倾向）*/
     Board b1; board_init(&b1);
-    b1.cells[7][7] = BLACK;
-    b1.move_count = 1;
-    b1.side_to_move = WHITE;
+    for (int c = 4; c < 7; c++) b1.cells[7][c] = BLACK;  /* 活三 */
+    b1.move_count = 3;
+    b1.side_to_move = BLACK;
 
     Board b2; board_init(&b2);
-    b2.cells[0][0] = BLACK;
-    b2.move_count = 1;
-    b2.side_to_move = WHITE;
+    b2.cells[7][4] = WHITE;
+    for (int c = 5; c < 8; c++) b2.cells[7][c] = BLACK;
+    b2.cells[7][8] = WHITE;
+    b2.move_count = 5;
+    b2.side_to_move = BLACK;
 
     int s1 = search_evaluate(&b1);
     int s2 = search_evaluate(&b2);
-    /* 视角是白方，黑下中央对白更不利，所以 s1 < s2 */
-    ASSERT_TRUE(s1 < s2, "evaluate: white-perspective with black at center < black at corner");
+    ASSERT_TRUE(s1 > s2, "evaluate: open_three score > dead_three score");
 }
 
 static void test_generate_empty_board(void) {
@@ -93,7 +94,7 @@ static void test_search_nodes_counted(void) {
 
 int main(void) {
     test_evaluate_empty();
-    test_evaluate_center_better_than_corner();
+    test_evaluate_open_three_beats_dead_three();
     test_generate_empty_board();
     test_generate_one_stone();
     test_generate_corner_stone();
