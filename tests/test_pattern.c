@@ -197,6 +197,48 @@ static void test_count_for_color_multiple_threes(void) {
     ASSERT_EQ(s.counts[PAT_OPEN_THREE], 2, "for_color: 2 separate open threes -> OPEN_THREE x2");
 }
 
+static void test_evaluate_empty(void) {
+    Board b; board_init(&b);
+    ASSERT_EQ(pattern_evaluate(&b), 0, "evaluate: empty board -> 0");
+}
+
+static void test_evaluate_black_open_three_advantage(void) {
+    Board b; board_init(&b);
+    for (int c = 4; c < 7; c++) b.cells[7][c] = 1;
+    b.move_count = 3;
+
+    b.side_to_move = 1;
+    int sB = pattern_evaluate(&b);
+    b.side_to_move = 2;
+    int sW = pattern_evaluate(&b);
+
+    ASSERT_TRUE(sB > 0, "evaluate: black open_three from black view > 0");
+    ASSERT_TRUE(sW < 0, "evaluate: black open_three from white view < 0");
+    ASSERT_EQ(sB, -sW, "evaluate: viewpoint symmetric");
+}
+
+static void test_evaluate_open_four_dominates_open_three(void) {
+    Board b; board_init(&b);
+    for (int c = 3; c < 7; c++) b.cells[5][c] = 1;
+    for (int c = 3; c < 6; c++) b.cells[10][c] = 2;
+    b.move_count = 7;
+    b.side_to_move = 1;
+
+    int score = pattern_evaluate(&b);
+    ASSERT_TRUE(score > 5000, "evaluate: open_four >> open_three");
+}
+
+static void test_evaluate_score_table_values(void) {
+    ASSERT_EQ(PATTERN_SCORE[PAT_FIVE],        100000, "score: FIVE = 100000");
+    ASSERT_EQ(PATTERN_SCORE[PAT_OPEN_FOUR],    10000, "score: OPEN_FOUR = 10000");
+    ASSERT_EQ(PATTERN_SCORE[PAT_OPEN_THREE],    1000, "score: OPEN_THREE = 1000");
+    ASSERT_EQ(PATTERN_SCORE[PAT_SIMPLE_FOUR],   1000, "score: SIMPLE_FOUR = 1000");
+    ASSERT_EQ(PATTERN_SCORE[PAT_OPEN_TWO],       100, "score: OPEN_TWO = 100");
+    ASSERT_EQ(PATTERN_SCORE[PAT_SLEEP_THREE],    100, "score: SLEEP_THREE = 100");
+    ASSERT_EQ(PATTERN_SCORE[PAT_SLEEP_TWO],       10, "score: SLEEP_TWO = 10");
+    ASSERT_EQ(PATTERN_SCORE[PAT_NONE],             0, "score: NONE = 0");
+}
+
 int main(void) {
     test_five_isolated();
     test_five_at_edge();
@@ -221,5 +263,9 @@ int main(void) {
     test_count_for_color_diagonal_main();
     test_count_for_color_diagonal_anti();
     test_count_for_color_multiple_threes();
+    test_evaluate_empty();
+    test_evaluate_black_open_three_advantage();
+    test_evaluate_open_four_dominates_open_three();
+    test_evaluate_score_table_values();
     TEST_REPORT("test_pattern");
 }

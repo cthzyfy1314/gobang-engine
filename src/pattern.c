@@ -83,8 +83,16 @@ void pattern_count_for_color(const Board *b, int color, PatternStats *out) {
     }
 }
 
-/* stub —— Task 8 实现 */
 int pattern_evaluate(const Board *b) {
-    (void)b;
-    return 0;
+    PatternStats sB = {0}, sW = {0};
+    pattern_count_for_color(b, BLACK, &sB);
+    pattern_count_for_color(b, WHITE, &sW);
+
+    int black_score = 0, white_score = 0;
+    for (int p = 0; p < PAT_COUNT; p++) {
+        black_score += sB.counts[p] * PATTERN_SCORE[p];
+        white_score += sW.counts[p] * PATTERN_SCORE[p];
+    }
+    int diff = black_score - white_score;
+    return (b->side_to_move == BLACK) ? diff : -diff;
 }
