@@ -135,22 +135,26 @@ void ui_main_loop(int my_color, int search_depth) {
     Board b;
     board_init(&b);
 
-    printf("=== gobang-engine — Renju (national rules) ===\n");
-    printf("You play: %s   Search depth: %d\n",
-           my_color == BLACK ? "BLACK (X)" : "WHITE (O)", search_depth);
-    printf("Commands per turn:\n");
-    printf("    <coord> like H8 / 7,7    place stone at that point\n");
-    printf("    h    show engine hint without playing\n");
-    printf("    u    undo last move\n");
-    printf("    r    resign\n");
-    printf("    q    quit immediately\n");
+    const char *me_str  = (my_color == BLACK) ? "BLACK (X)" : "WHITE (O)";
+    const char *opp_str = (my_color == BLACK) ? "WHITE (O)" : "BLACK (X)";
 
-    /* 黑 1 天元 hardcode（spec § 6） */
+    printf("=== gobang-engine — Renju (national rules) ===\n");
+    printf("AI plays:        %s\n", me_str);
+    printf("You relay for:   %s (the opponent)\n", opp_str);
+    printf("Search depth:    %d\n", search_depth);
+    printf("\n");
+    printf("Each turn:\n");
+    printf("  - When it's MY (AI) move, the engine plays automatically.\n");
+    printf("  - When it's OPPONENT's move, type their coordinate (e.g. H8 / 7,7).\n");
+    printf("  - Other commands at any opponent prompt:\n");
+    printf("      u = undo last full pair (opp + AI)    r = resign    q = quit\n");
+
+    /* 黑 1 天元（国规）— 如果 AI 执黑，自动落天元；如果 AI 执白，等待对手黑 1。 */
     if (my_color == BLACK) {
-        printf("\nNational rule: BLACK 1 must be at tengen (H8). Auto-playing.\n");
+        printf("\n[Opening] National rule: BLACK 1 = tengen. AI plays H8 automatically.\n");
         board_place(&b, 7, 7, BLACK);
     } else {
-        printf("\nWaiting for BLACK opponent. Their first move (per national rules) should be H8.\n");
+        printf("\n[Opening] Waiting for opponent's BLACK 1 (national rule = tengen H8).\n");
     }
 
     char line[128];
@@ -159,17 +163,37 @@ void ui_main_loop(int my_color, int search_depth) {
 
         GameResult res = board_check_winner(&b);
         if (res != RESULT_NONE) {
-            const char *msg = (res == RESULT_BLACK_WIN)               ? "BLACK wins!" :
-                              (res == RESULT_WHITE_WIN_NORMAL)        ? "WHITE wins!" :
+            const char *msg = (res == RESULT_BLACK_WIN)                 ? "BLACK wins!" :
+                              (res == RESULT_WHITE_WIN_NORMAL)          ? "WHITE wins!" :
                               (res == RESULT_WHITE_WIN_BY_BLACK_FORBID) ? "WHITE wins (BLACK played a forbid)!" :
-                                                                        "DRAW";
+                                                                          "DRAW";
             printf("*** Game over: %s ***\n", msg);
             return;
         }
 
         int active = b.side_to_move;
-        const char *who = (active == my_color) ? "YOU" : "OPPONENT";
-        printf("[%s] (%s to move) > ", who, active == BLACK ? "BLACK" : "WHITE");
+
+        if (active == my_color) {
+            /* === AI 自动出招 === */
+            printf("[AI %s thinking @ depth=%d ...]\n",
+                   active == BLACK ? "BLACK" : "WHITE", search_depth);
+            fflush(stdout);
+            SearchResult r = search_best_move(&b, search_depth);
+            if (r.best_move.row < 0) {
+                printf(">>> AI: no legal move available. Resigning.\n");
+                return;
+            }
+            char buf[8];
+            coord_to_str(r.best_move.row, r.best_move.col, buf);
+            printf(">>> AI plays: %s    (score=%d, nodes=%ld)\n",
+                   buf, r.score, r.nodes_searched);
+            board_place(&b, r.best_move.row, r.best_move.col, active);
+            continue;
+        }
+
+        /* === 对手回合：等用户输入对手坐标 === */
+        printf("[Opponent %s to move] enter their coord (H8 / 7,7) or u/r/q > ",
+               active == BLACK ? "BLACK" : "WHITE");
         fflush(stdout);
 
         if (!fgets(line, sizeof(line), stdin)) {
@@ -187,8 +211,15 @@ void ui_main_loop(int my_color, int search_depth) {
                     printf("Quit.\n");
                     return;
                 case UI_CMD_UNDO:
-                    if (board_undo(&b)) printf("Undo OK.\n");
-                    else                printf("Cannot undo: empty history.\n");
+                    /* 撤一对：先撤 AI 这步，再撤对手这步——回到 "对手轮次" 状态 */
+                    if (board_undo(&b)) {
+                        if (board_undo(&b))
+                            printf("Undo OK (1 opp + 1 AI move).\n");
+                        else
+                            printf("Undo OK (only AI's last move; no prior opp move).\n");
+                    } else {
+                        printf("Cannot undo: history empty.\n");
+                    }
                     continue;
                 case UI_CMD_HINT:
                     show_engine_suggestion(&b, search_depth);
@@ -198,26 +229,21 @@ void ui_main_loop(int my_color, int search_depth) {
                            my_color == BLACK ? "WHITE" : "BLACK");
                     return;
                 default:
-                    printf("Invalid input. Try H8 / 7,7 / u / h / q / r.\n");
+                    printf("Invalid input. Try H8 / 7,7 / u / r / q.\n");
                     continue;
             }
         }
 
-        /* 若我方执黑落子且该点是禁手，警告但仍允许（让用户决定）*/
-        if (active == my_color) warn_forbid_for_black(&b, row, col);
+        /* 对手是黑方时，警告其落子是否为禁手（仅作信息提示，不阻止） */
+        if (active == BLACK) warn_forbid_for_black(&b, row, col);
 
         if (!board_place(&b, row, col, active)) {
-            printf("Illegal move (occupied or out of range).\n");
+            printf("Illegal opponent move (occupied or out of range). Re-enter.\n");
             continue;
         }
 
         char buf[8];
         coord_to_str(row, col, buf);
-        printf("%s plays %s.\n", who, buf);
-
-        /* 我方刚下完后不给建议；对手下完后给我方建议 */
-        if (active != my_color) {
-            show_engine_suggestion(&b, search_depth);
-        }
+        printf("Opponent plays: %s    (recorded)\n", buf);
     }
 }
