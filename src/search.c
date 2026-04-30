@@ -5,6 +5,7 @@
 #include "search.h"
 #include "board.h"
 #include "pattern.h"
+#include "zobrist.h"
 
 /* 4/30 起：转发给 pattern_evaluate（替换 4/29 的中央倾向 placeholder） */
 int search_evaluate(const Board *b) {
@@ -60,6 +61,14 @@ int search_generate_neighbor_moves(const Board *b, Move *out) {
 static int alphabeta(Board *b, int depth_left, int alpha, int beta, long *nodes) {
     (*nodes)++;
 
+    /* TT 查询 */
+    const TTEntry *e = tt_get(b->zobrist_hash);
+    if (e != NULL && e->depth >= depth_left) {
+        if (e->flag == TT_FLAG_EXACT) return e->score;
+        if (e->flag == TT_FLAG_LOWER && e->score >= beta)  return e->score;
+        if (e->flag == TT_FLAG_UPPER && e->score <= alpha) return e->score;
+    }
+
     /* 终局检查（注意：此时 side_to_move 已经是"对手"，因为上一手刚落完） */
     GameResult res = board_check_winner(b);
     if (res == RESULT_BLACK_WIN) {
@@ -76,23 +85,40 @@ static int alphabeta(Board *b, int depth_left, int alpha, int beta, long *nodes)
     int n = search_generate_neighbor_moves(b, moves);
     if (n == 0) return search_evaluate(b);
 
-    int best = -SEARCH_INF;
+    int orig_alpha = alpha;
+    int best_score = -SEARCH_INF;
+    int best_r = -1, best_c = -1;
     for (int i = 0; i < n; i++) {
         int color = b->side_to_move;
         if (!board_place(b, moves[i].row, moves[i].col, color)) continue;
         int score = -alphabeta(b, depth_left - 1, -beta, -alpha, nodes);
         board_undo(b);
 
-        if (score > best) best = score;
-        if (best > alpha) alpha = best;
+        if (score > best_score) {
+            best_score = score;
+            best_r = moves[i].row;
+            best_c = moves[i].col;
+        }
+        if (best_score > alpha) alpha = best_score;
         if (alpha >= beta) break;  /* β 剪枝 */
     }
-    return best;
+
+    /* TT 写入：根据 alpha/beta 边界判定 flag */
+    TTFlag flag;
+    if (best_score <= orig_alpha)      flag = TT_FLAG_UPPER;
+    else if (best_score >= beta)       flag = TT_FLAG_LOWER;
+    else                                flag = TT_FLAG_EXACT;
+    tt_put(b->zobrist_hash, depth_left, best_score, flag, best_r, best_c);
+
+    return best_score;
 }
 
 SearchResult search_best_move(Board *b, int depth) {
     SearchResult result = { .best_move = { -1, -1, (int8_t)b->side_to_move },
                             .score = -SEARCH_INF, .nodes_searched = 0 };
+
+    /* 每次新搜索清表（5/2 加迭代加深后改为只在新游戏清）*/
+    tt_clear();
 
     Move moves[SEARCH_MAX_MOVES];
     int n = search_generate_neighbor_moves(b, moves);

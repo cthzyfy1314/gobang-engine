@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include "board.h"
 #include "search.h"
+#include "zobrist.h"
 
 static void print_board_minimal(const Board *b) {
     printf("    ");
@@ -22,10 +23,12 @@ static void print_board_minimal(const Board *b) {
 }
 
 int main(void) {
+    zobrist_init();
+
     Board b;
     board_init(&b);
 
-    printf("gobang-engine Day 1 self-play demo (10 plies, depth=2)\n\n");
+    printf("gobang-engine self-play demo (10 plies, depth=2)\n\n");
 
     for (int ply = 0; ply < 10; ply++) {
         SearchResult r = search_best_move(&b, 2);

@@ -35,18 +35,23 @@ if errorlevel 1 ( echo [ERROR] main build failed & exit /b 1 )
 rem ========== 单元测试 ==========
 echo Building test_board.exe...
 cl /W3 /TC /utf-8 /nologo /Fe:test_board.exe /Fo:build\ ^
-   src\board.c tests\test_board.c
+   src\board.c src\zobrist.c tests\test_board.c
 if errorlevel 1 ( echo [ERROR] test_board build failed & exit /b 1 )
 
 echo Building test_search.exe...
 cl /W3 /TC /utf-8 /nologo /Fe:test_search.exe /Fo:build\ ^
-   src\board.c src\pattern.c src\search.c tests\test_search.c
+   src\board.c src\pattern.c src\search.c src\zobrist.c tests\test_search.c
 if errorlevel 1 ( echo [ERROR] test_search build failed & exit /b 1 )
 
 echo Building test_pattern.exe...
 cl /W3 /TC /utf-8 /nologo /Fe:test_pattern.exe /Fo:build\ ^
-   src\board.c src\pattern.c tests\test_pattern.c
+   src\board.c src\pattern.c src\zobrist.c tests\test_pattern.c
 if errorlevel 1 ( echo [ERROR] test_pattern build failed & exit /b 1 )
+
+echo Building test_zobrist.exe...
+cl /W3 /TC /utf-8 /nologo /Fe:test_zobrist.exe /Fo:build\ ^
+   src\board.c src\zobrist.c tests\test_zobrist.c
+if errorlevel 1 ( echo [ERROR] test_zobrist build failed & exit /b 1 )
 
 echo.
 echo [OK] build complete.
@@ -55,3 +60,4 @@ echo   gobang-engine.exe
 echo   test_board.exe
 echo   test_search.exe
 echo   test_pattern.exe
+echo   test_zobrist.exe
