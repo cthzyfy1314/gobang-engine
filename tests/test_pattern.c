@@ -56,11 +56,54 @@ static void test_color_isolation(void) {
     ASSERT_EQ(sW.counts[PAT_FIVE], 0, "iso: white sees XXXXX as nothing");
 }
 
+static void test_open_four(void) {
+    int8_t line[16]; PatternStats s = {0};
+    int n = build_line("__XXXX__", line);
+    pattern_count_in_line(line, n, 1, &s);
+    ASSERT_EQ(s.counts[PAT_OPEN_FOUR], 1, "open_four: __XXXX__ -> OPEN_FOUR x1");
+    ASSERT_EQ(s.counts[PAT_FIVE], 0, "open_four: not five");
+}
+
+static void test_simple_four_blocked_left(void) {
+    int8_t line[16]; PatternStats s = {0};
+    int n = build_line("OXXXX_", line);
+    pattern_count_in_line(line, n, 1, &s);
+    ASSERT_EQ(s.counts[PAT_SIMPLE_FOUR], 1, "simple_four: OXXXX_ -> SIMPLE_FOUR x1");
+    ASSERT_EQ(s.counts[PAT_OPEN_FOUR], 0, "simple_four: not OPEN_FOUR");
+}
+
+static void test_simple_four_blocked_right(void) {
+    int8_t line[16]; PatternStats s = {0};
+    int n = build_line("_XXXXO", line);
+    pattern_count_in_line(line, n, 1, &s);
+    ASSERT_EQ(s.counts[PAT_SIMPLE_FOUR], 1, "simple_four: _XXXXO -> SIMPLE_FOUR x1");
+}
+
+static void test_simple_four_at_edge(void) {
+    int8_t line[16]; PatternStats s = {0};
+    int n = build_line("XXXX_", line);
+    pattern_count_in_line(line, n, 1, &s);
+    ASSERT_EQ(s.counts[PAT_SIMPLE_FOUR], 1, "simple_four: edge XXXX_ -> SIMPLE_FOUR x1");
+}
+
+static void test_dead_four(void) {
+    int8_t line[16]; PatternStats s = {0};
+    int n = build_line("OXXXXO", line);
+    pattern_count_in_line(line, n, 1, &s);
+    ASSERT_EQ(s.counts[PAT_OPEN_FOUR], 0, "dead_four: not open");
+    ASSERT_EQ(s.counts[PAT_SIMPLE_FOUR], 0, "dead_four: not simple");
+}
+
 int main(void) {
     test_five_isolated();
     test_five_at_edge();
     test_six_overline_counts_as_five();
     test_white_five();
     test_color_isolation();
+    test_open_four();
+    test_simple_four_blocked_left();
+    test_simple_four_blocked_right();
+    test_simple_four_at_edge();
+    test_dead_four();
     TEST_REPORT("test_pattern");
 }

@@ -23,10 +23,17 @@ void pattern_count_in_line(const int8_t *line, int len, int color, PatternStats 
         while (j < len && line[j] == (int8_t)color) j++;
         int run_len = j - i;
 
+        int left_open  = (i - 1 >= 0)  && (line[i - 1] == 0);
+        int right_open = (j     <  len) && (line[j]     == 0);
+        int open_count = left_open + right_open;
+
         if (run_len >= 5) {
             out->counts[PAT_FIVE]++;
+        } else if (run_len == 4) {
+            if (open_count == 2)      out->counts[PAT_OPEN_FOUR]++;
+            else if (open_count == 1) out->counts[PAT_SIMPLE_FOUR]++;
         }
-        /* 后续 task 在此处加 4/3/2 的分支 */
+        /* run_len == 3, 2 在 Task 5/6 处理 */
 
         i = j;
     }
