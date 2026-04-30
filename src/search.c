@@ -6,6 +6,7 @@
 #include "board.h"
 #include "pattern.h"
 #include "zobrist.h"
+#include "forbid.h"
 
 /* Move ordering helpers — 跨 ID 迭代保留 */
 typedef struct {
@@ -150,6 +151,10 @@ static int alphabeta(Board *b, int ply, int depth_left, int alpha, int beta, lon
     int best_r = -1, best_c = -1;
     for (int i = 0; i < n; i++) {
         int color = b->side_to_move;
+        /* 国规黑禁手：排除黑方禁手位置（forbid_check_black 已处理"五连优先"）*/
+        if (color == BLACK && b->forbid_enabled) {
+            if (forbid_check_black(b, moves[i].row, moves[i].col) != FORBID_NONE) continue;
+        }
         if (!board_place(b, moves[i].row, moves[i].col, color)) continue;
         int score = -alphabeta(b, ply + 1, depth_left - 1, -beta, -alpha, nodes);
         board_undo(b);
@@ -214,6 +219,10 @@ SearchResult search_best_move(Board *b, int max_depth) {
 
         for (int i = 0; i < n; i++) {
             int color = b->side_to_move;
+            /* 国规黑禁手：根节点也要排除禁手位置 */
+            if (color == BLACK && b->forbid_enabled) {
+                if (forbid_check_black(b, moves[i].row, moves[i].col) != FORBID_NONE) continue;
+            }
             if (!board_place(b, moves[i].row, moves[i].col, color)) continue;
             int score = -alphabeta(b, 1, d - 1, -beta, -alpha, &cur.nodes_searched);
             board_undo(b);
