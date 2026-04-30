@@ -10,6 +10,7 @@
 
 #define SEARCH_INF      1000000
 #define SEARCH_MAX_MOVES 256       /* 一次 generate 最多返回的候选数 */
+#define SEARCH_MAX_PLY  32         /* killer/history 数组维度 */
 
 typedef struct {
     Move best_move;
@@ -35,5 +36,8 @@ int search_evaluate(const Board *b);
  * 如果棋盘空，只返回中心点 (7,7)。
  */
 int search_generate_neighbor_moves(const Board *b, Move *out);
+
+/* 重置搜索状态（清 TT + killer + history）。新游戏开始时调用。 */
+void search_reset(void);
 
 #endif /* SEARCH_H_ */

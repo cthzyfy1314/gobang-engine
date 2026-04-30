@@ -7,6 +7,41 @@
 #include "pattern.h"
 #include "zobrist.h"
 
+/* Move ordering helpers — 跨 ID 迭代保留 */
+typedef struct {
+    int8_t row, col;
+} Killer;
+
+static Killer _killers[SEARCH_MAX_PLY][2];
+static long   _history[2][BOARD_SIZE * BOARD_SIZE];
+
+static void clear_search_state(void) {
+    for (int p = 0; p < SEARCH_MAX_PLY; p++) {
+        _killers[p][0].row = _killers[p][0].col = -1;
+        _killers[p][1].row = _killers[p][1].col = -1;
+    }
+    for (int c = 0; c < 2; c++)
+        for (int i = 0; i < BOARD_SIZE * BOARD_SIZE; i++)
+            _history[c][i] = 0;
+}
+
+static int is_killer(int ply, int row, int col) {
+    return (_killers[ply][0].row == row && _killers[ply][0].col == col) ||
+           (_killers[ply][1].row == row && _killers[ply][1].col == col);
+}
+
+static void record_killer(int ply, int row, int col) {
+    if (is_killer(ply, row, col)) return;
+    _killers[ply][1] = _killers[ply][0];
+    _killers[ply][0].row = (int8_t)row;
+    _killers[ply][0].col = (int8_t)col;
+}
+
+void search_reset(void) {
+    tt_clear();
+    clear_search_state();
+}
+
 /* 4/30 起：转发给 pattern_evaluate（替换 4/29 的中央倾向 placeholder） */
 int search_evaluate(const Board *b) {
     return pattern_evaluate(b);
@@ -58,8 +93,10 @@ int search_generate_neighbor_moves(const Board *b, Move *out) {
  *   depth_left = 还要往深搜几层
  *   nodes = 节点计数累加器
  */
-static int alphabeta(Board *b, int depth_left, int alpha, int beta, long *nodes) {
+static int alphabeta(Board *b, int ply, int depth_left, int alpha, int beta, long *nodes) {
     (*nodes)++;
+
+    if (ply >= SEARCH_MAX_PLY) return search_evaluate(b);
 
     /* TT 查询 */
     const TTEntry *e = tt_get(b->zobrist_hash);
@@ -69,7 +106,7 @@ static int alphabeta(Board *b, int depth_left, int alpha, int beta, long *nodes)
         if (e->flag == TT_FLAG_UPPER && e->score <= alpha) return e->score;
     }
 
-    /* 终局检查（注意：此时 side_to_move 已经是"对手"，因为上一手刚落完） */
+    /* 终局检查 */
     GameResult res = board_check_winner(b);
     if (res == RESULT_BLACK_WIN) {
         return (b->side_to_move == BLACK) ? SEARCH_INF - b->move_count : -(SEARCH_INF - b->move_count);
@@ -85,13 +122,36 @@ static int alphabeta(Board *b, int depth_left, int alpha, int beta, long *nodes)
     int n = search_generate_neighbor_moves(b, moves);
     if (n == 0) return search_evaluate(b);
 
+    /* Move ordering: TT best > killer1 > killer2 > history score 降序 */
+    int8_t tt_r = (e != NULL) ? e->best_row : (int8_t)-1;
+    int8_t tt_c = (e != NULL) ? e->best_col : (int8_t)-1;
+    int color_idx = b->side_to_move - 1;
+    long priority[SEARCH_MAX_MOVES];
+    for (int i = 0; i < n; i++) {
+        int r = moves[i].row, c = moves[i].col;
+        long score;
+        if (r == tt_r && c == tt_c)        score = 1000000000L;
+        else if (is_killer(ply, r, c))     score = 100000000L;
+        else                                score = _history[color_idx][r * BOARD_SIZE + c];
+        priority[i] = score;
+    }
+    /* 选择排序，n ≤ ~100 */
+    for (int i = 0; i < n - 1; i++) {
+        int best = i;
+        for (int j = i + 1; j < n; j++) if (priority[j] > priority[best]) best = j;
+        if (best != i) {
+            Move tm = moves[i]; moves[i] = moves[best]; moves[best] = tm;
+            long tp = priority[i]; priority[i] = priority[best]; priority[best] = tp;
+        }
+    }
+
     int orig_alpha = alpha;
     int best_score = -SEARCH_INF;
     int best_r = -1, best_c = -1;
     for (int i = 0; i < n; i++) {
         int color = b->side_to_move;
         if (!board_place(b, moves[i].row, moves[i].col, color)) continue;
-        int score = -alphabeta(b, depth_left - 1, -beta, -alpha, nodes);
+        int score = -alphabeta(b, ply + 1, depth_left - 1, -beta, -alpha, nodes);
         board_undo(b);
 
         if (score > best_score) {
@@ -100,7 +160,12 @@ static int alphabeta(Board *b, int depth_left, int alpha, int beta, long *nodes)
             best_c = moves[i].col;
         }
         if (best_score > alpha) alpha = best_score;
-        if (alpha >= beta) break;  /* β 剪枝 */
+        if (alpha >= beta) {
+            /* β 剪枝：记录 killer + history */
+            record_killer(ply, moves[i].row, moves[i].col);
+            _history[color - 1][moves[i].row * BOARD_SIZE + moves[i].col] += (1L << depth_left);
+            break;
+        }
     }
 
     /* TT 写入：根据 alpha/beta 边界判定 flag */
@@ -113,29 +178,57 @@ static int alphabeta(Board *b, int depth_left, int alpha, int beta, long *nodes)
     return best_score;
 }
 
-SearchResult search_best_move(Board *b, int depth) {
+SearchResult search_best_move(Board *b, int max_depth) {
     SearchResult result = { .best_move = { -1, -1, (int8_t)b->side_to_move },
                             .score = -SEARCH_INF, .nodes_searched = 0 };
 
-    /* 每次新搜索清表（5/2 加迭代加深后改为只在新游戏清）*/
+    /* 入口同步 hash + 清 TT/killer/history。
+     * TT 跨 search 调用复用是更优策略，但需要全局保证 hash 同步——
+     * 当前测试直接改 cells 不调 board_place，所以保守地每次清表。
+     * （ID 内部仍能享受 d=1→d=2→...逐层复用 TT 的加速。）
+     */
+    b->zobrist_hash = zobrist_compute(b);
     tt_clear();
+    clear_search_state();
 
     Move moves[SEARCH_MAX_MOVES];
     int n = search_generate_neighbor_moves(b, moves);
     if (n == 0) return result;
 
-    int alpha = -SEARCH_INF, beta = SEARCH_INF;
-    for (int i = 0; i < n; i++) {
-        int color = b->side_to_move;
-        if (!board_place(b, moves[i].row, moves[i].col, color)) continue;
-        int score = -alphabeta(b, depth - 1, -beta, -alpha, &result.nodes_searched);
-        board_undo(b);
+    /* 迭代加深：1 → max_depth */
+    for (int d = 1; d <= max_depth; d++) {
+        SearchResult cur = { .best_move = result.best_move,
+                             .score = -SEARCH_INF, .nodes_searched = result.nodes_searched };
+        int alpha = -SEARCH_INF, beta = SEARCH_INF;
 
-        if (score > result.score) {
-            result.score = score;
-            result.best_move = moves[i];
+        /* 顶层用 TT best 排在第一（PV-first）*/
+        const TTEntry *root_tt = tt_get(b->zobrist_hash);
+        if (root_tt && root_tt->best_row >= 0) {
+            for (int i = 0; i < n; i++) {
+                if (moves[i].row == root_tt->best_row && moves[i].col == root_tt->best_col) {
+                    Move t = moves[0]; moves[0] = moves[i]; moves[i] = t;
+                    break;
+                }
+            }
         }
-        if (score > alpha) alpha = score;
+
+        for (int i = 0; i < n; i++) {
+            int color = b->side_to_move;
+            if (!board_place(b, moves[i].row, moves[i].col, color)) continue;
+            int score = -alphabeta(b, 1, d - 1, -beta, -alpha, &cur.nodes_searched);
+            board_undo(b);
+
+            if (score > cur.score) {
+                cur.score = score;
+                cur.best_move = moves[i];
+            }
+            if (score > alpha) alpha = score;
+        }
+
+        result = cur;
+
+        /* 早停：发现必胜（剩余分阈值）*/
+        if (result.score > SEARCH_INF / 2) break;
     }
     return result;
 }
