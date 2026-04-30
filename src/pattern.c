@@ -15,9 +15,21 @@ const int PATTERN_SCORE[PAT_COUNT] = {
     100000     /* PAT_FIVE */
 };
 
-/* stub —— Task 3-6 实现 */
 void pattern_count_in_line(const int8_t *line, int len, int color, PatternStats *out) {
-    (void)line; (void)len; (void)color; (void)out;
+    int i = 0;
+    while (i < len) {
+        if (line[i] != (int8_t)color) { i++; continue; }
+        int j = i;
+        while (j < len && line[j] == (int8_t)color) j++;
+        int run_len = j - i;
+
+        if (run_len >= 5) {
+            out->counts[PAT_FIVE]++;
+        }
+        /* 后续 task 在此处加 4/3/2 的分支 */
+
+        i = j;
+    }
 }
 
 /* stub —— Task 7 实现 */
