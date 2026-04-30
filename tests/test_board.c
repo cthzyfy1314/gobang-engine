@@ -87,6 +87,10 @@ static void test_board_is_full(void) {
 
 /* 辅助：水平连续放 count 个 color 棋子，从 (start_r, start_c) 开始。
  * 直接改 cells，避开 place 的 turn-switching 逻辑，方便构造任意局面。
+ *
+ * !!! 重要：此 helper 没填 history[] 也没更新 zobrist_hash。
+ * 用此 helper 构造的 board 不能调 board_undo（会读取垃圾 history）。
+ * 也不要用此 helper 后期望 zobrist_hash 与 cells 一致。
  */
 static void place_horizontal_run(Board *b, int start_r, int start_c, int count, int color) {
     for (int i = 0; i < count; i++) {

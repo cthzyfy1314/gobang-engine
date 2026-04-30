@@ -157,6 +157,22 @@ static void test_corner_no_false_positive(void) {
     ASSERT_EQ(forbid_check_black(&b, 0, 0), FORBID_NONE, "corner: empty board -> NONE");
 }
 
+static void test_four_plus_three_not_double_anything(void) {
+    /* 四 + 三 (不同方向) 不构成双四也不构成双三 → FORBID_NONE
+     * 横：(7,4)(7,5)(7,6) 黑 + 落 (7,7) → 横向 4 连开放（活四，记 1 个四）
+     * 竖：(5,7)(6,7) 黑 + 落 (7,7) → 竖向 3 连开放（活三，记 1 个三）
+     * → 1 四 + 1 三 ≠ 双四 ≠ 双三 → NONE
+     */
+    Board b; board_init(&b);
+    put(&b, 7, 4, BLACK);
+    put(&b, 7, 5, BLACK);
+    put(&b, 7, 6, BLACK);
+    put(&b, 5, 7, BLACK);
+    put(&b, 6, 7, BLACK);
+    ASSERT_EQ(forbid_check_black(&b, 7, 7), FORBID_NONE,
+              "four+three: single four + single three (different dirs) -> NONE");
+}
+
 static void test_occupied_returns_none(void) {
     Board b; board_init(&b);
     put(&b, 7, 7, WHITE);
@@ -175,5 +191,6 @@ int main(void) {
     test_blocked_three_not_forbid();
     test_corner_no_false_positive();
     test_occupied_returns_none();
+    test_four_plus_three_not_double_anything();
     TEST_REPORT("test_forbid");
 }

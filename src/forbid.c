@@ -49,14 +49,7 @@ static int has_four_through_center(const int8_t *line) {
             for (int k = 0; k < 5; k++) if (line[i + k] == 0) { empty_pos = k; break; }
 
             if (empty_pos == 0 || empty_pos == 4) {
-                /* 空在端：4 子连续 → 是连续冲四，可能升级活四 */
-                /* 检查更外侧一格：双端开放 = 活四，单端 = 冲四 */
-                int outer_left  = (i + 0 - 1 >= 0)  ? line[i + 0 - 1]  : -1;
-                int outer_right = (i + 5     <= 10) ? line[i + 5]     : -1;
-                /* 注意：如果 empty_pos=0，则 4 子是 i+1..i+4，外侧右是 i+5；外侧左是 i-1（empty 之前的） */
-                /*       如果 empty_pos=4，则 4 子是 i..i+3，外侧右是 i+4 即 empty 本身，外侧左是 i-1 */
-                /* 简化：不严格区分活四 vs 冲四（都算"四"），返回 1 即可 */
-                (void)outer_left; (void)outer_right;
+                /* 空在端：4 子连续 → 简化版不严格区分活四/冲四，统一记一个"四" */
                 return 1;
             } else {
                 /* 跳冲四（空在中间）*/
@@ -72,6 +65,10 @@ static int has_four_through_center(const int8_t *line) {
  *   _XXX_   连续活三（6 长度窗口 0,1,1,1,0,?）
  *   _XX_X_  / _X_XX_  跳活三（6 长度窗口）
  * 返回该方向匹配数（最多 2，但通常 ≤ 1）。
+ *
+ * 索引说明：
+ *   连续 _XXX_：3 黑子在 i+1..i+3，"center 必须在 3 黑子之中" → 5 ∈ [i+1, i+3]
+ *   跳 _XX_X_ / _X_XX_：黑子分布在 i+1..i+4 范围内，"center 在黑子区间" → 5 ∈ [i+1, i+4]
  */
 static int count_open_threes_through_center(const int8_t *line) {
     int count = 0;

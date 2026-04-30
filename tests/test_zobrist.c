@@ -69,6 +69,23 @@ static void test_tt_get_missing(void) {
     ASSERT_TRUE(e == NULL, "tt: get returns NULL when not present");
 }
 
+static void test_incremental_matches_recompute(void) {
+    /* 增量 hash（board_place）与从头算 hash（zobrist_compute）应相等 */
+    Board b; board_init(&b);
+    board_place(&b, 7, 7, BLACK);
+    board_place(&b, 7, 8, WHITE);
+    board_place(&b, 8, 8, BLACK);
+    board_place(&b, 5, 5, WHITE);
+    uint64_t inc = b.zobrist_hash;
+    uint64_t recomp = zobrist_compute(&b);
+    ASSERT_TRUE(inc == recomp, "incremental hash equals recomputed hash after 4 plies");
+    /* 撤一步后再校验 */
+    board_undo(&b);
+    inc = b.zobrist_hash;
+    recomp = zobrist_compute(&b);
+    ASSERT_TRUE(inc == recomp, "incremental hash equals recomputed hash after undo");
+}
+
 int main(void) {
     zobrist_init();
     test_compute_empty_board();
@@ -78,5 +95,6 @@ int main(void) {
     test_compute_order_independent();
     test_tt_put_get_roundtrip();
     test_tt_get_missing();
+    test_incremental_matches_recompute();
     TEST_REPORT("test_zobrist");
 }

@@ -14,7 +14,8 @@ typedef struct {
 } Killer;
 
 static Killer _killers[SEARCH_MAX_PLY][2];
-static long   _history[2][BOARD_SIZE * BOARD_SIZE];
+/* long long: 在 MSVC 32-bit long 下避免 (1LL << depth_left) 溢出 */
+static long long _history[2][BOARD_SIZE * BOARD_SIZE];
 
 static void clear_search_state(void) {
     for (int p = 0; p < SEARCH_MAX_PLY; p++) {
@@ -107,7 +108,12 @@ static int alphabeta(Board *b, int ply, int depth_left, int alpha, int beta, lon
         if (e->flag == TT_FLAG_UPPER && e->score <= alpha) return e->score;
     }
 
-    /* 终局检查 */
+    /* 终局检查
+     * 注意：进入此函数时 b->side_to_move 已是"上一手对方落子后翻转"的玩家，
+     * 即"刚刚落子"的玩家是 (side_to_move == BLACK ? WHITE : BLACK)。
+     * 若 winner == 刚刚落子者 → 返回 +SEARCH_INF（对当前 side 而言，对手赢了 = 自己输 = 负值）
+     * 若 winner == 当前 side → 几乎不可能（对手刚下完但反而是自己赢？只发生于 forbid 反向判罚），仍正确处理
+     */
     GameResult res = board_check_winner(b);
     if (res == RESULT_BLACK_WIN) {
         return (b->side_to_move == BLACK) ? SEARCH_INF - b->move_count : -(SEARCH_INF - b->move_count);
@@ -127,12 +133,12 @@ static int alphabeta(Board *b, int ply, int depth_left, int alpha, int beta, lon
     int8_t tt_r = (e != NULL) ? e->best_row : (int8_t)-1;
     int8_t tt_c = (e != NULL) ? e->best_col : (int8_t)-1;
     int color_idx = b->side_to_move - 1;
-    long priority[SEARCH_MAX_MOVES];
+    long long priority[SEARCH_MAX_MOVES];
     for (int i = 0; i < n; i++) {
         int r = moves[i].row, c = moves[i].col;
-        long score;
-        if (r == tt_r && c == tt_c)        score = 1000000000L;
-        else if (is_killer(ply, r, c))     score = 100000000L;
+        long long score;
+        if (r == tt_r && c == tt_c)        score = 1000000000LL;
+        else if (is_killer(ply, r, c))     score = 100000000LL;
         else                                score = _history[color_idx][r * BOARD_SIZE + c];
         priority[i] = score;
     }
@@ -142,7 +148,7 @@ static int alphabeta(Board *b, int ply, int depth_left, int alpha, int beta, lon
         for (int j = i + 1; j < n; j++) if (priority[j] > priority[best]) best = j;
         if (best != i) {
             Move tm = moves[i]; moves[i] = moves[best]; moves[best] = tm;
-            long tp = priority[i]; priority[i] = priority[best]; priority[best] = tp;
+            long long tp = priority[i]; priority[i] = priority[best]; priority[best] = tp;
         }
     }
 
@@ -168,7 +174,9 @@ static int alphabeta(Board *b, int ply, int depth_left, int alpha, int beta, lon
         if (alpha >= beta) {
             /* β 剪枝：记录 killer + history */
             record_killer(ply, moves[i].row, moves[i].col);
-            _history[color - 1][moves[i].row * BOARD_SIZE + moves[i].col] += (1L << depth_left);
+            /* clamp shift 避免 (1 << large) UB */
+            int sh = depth_left < 30 ? depth_left : 30;
+            _history[color - 1][moves[i].row * BOARD_SIZE + moves[i].col] += (1LL << sh);
             break;
         }
     }

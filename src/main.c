@@ -52,7 +52,11 @@ int main(int argc, char **argv) {
     for (int i = 1; i < argc; i++) {
         if      (!strcmp(argv[i], "--white"))         my_color = WHITE;
         else if (!strcmp(argv[i], "--black"))         my_color = BLACK;
-        else if (!strncmp(argv[i], "--depth=", 8))    depth = atoi(argv[i] + 8);
+        else if (!strncmp(argv[i], "--depth=", 8)) {
+            depth = atoi(argv[i] + 8);
+            if (depth < 1)  depth = 1;
+            if (depth > 12) depth = 12;
+        }
         else if (!strcmp(argv[i], "--demo"))          demo_mode = 1;
         else {
             printf("Unknown option: %s\n", argv[i]);
