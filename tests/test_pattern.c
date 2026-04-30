@@ -1,6 +1,7 @@
 /* tests/test_pattern.c */
 #include <string.h>
 #include "test_runner.h"
+#include "../src/board.h"
 #include "../src/pattern.h"
 
 /* 辅助：用字符串字面量构造一条线。'_' = EMPTY, 'X' = BLACK, 'O' = WHITE */
@@ -155,6 +156,47 @@ static void test_single_stone_no_pattern(void) {
     ASSERT_EQ(s.counts[PAT_SLEEP_TWO], 0, "single: not SLEEP_TWO");
 }
 
+static void test_count_for_color_horizontal(void) {
+    Board b; board_init(&b);
+    for (int c = 0; c < 5; c++) b.cells[7][c] = 1;
+    PatternStats s = {0};
+    pattern_count_for_color(&b, 1, &s);
+    ASSERT_EQ(s.counts[PAT_FIVE], 1, "for_color: horizontal black 5 -> FIVE x1");
+}
+
+static void test_count_for_color_vertical(void) {
+    Board b; board_init(&b);
+    for (int r = 0; r < 5; r++) b.cells[r][7] = 1;
+    PatternStats s = {0};
+    pattern_count_for_color(&b, 1, &s);
+    ASSERT_EQ(s.counts[PAT_FIVE], 1, "for_color: vertical black 5 -> FIVE x1");
+}
+
+static void test_count_for_color_diagonal_main(void) {
+    Board b; board_init(&b);
+    for (int i = 0; i < 5; i++) b.cells[3 + i][3 + i] = 1;
+    PatternStats s = {0};
+    pattern_count_for_color(&b, 1, &s);
+    ASSERT_EQ(s.counts[PAT_FIVE], 1, "for_color: main-diag black 5 -> FIVE x1");
+}
+
+static void test_count_for_color_diagonal_anti(void) {
+    Board b; board_init(&b);
+    for (int i = 0; i < 5; i++) b.cells[3 + i][11 - i] = 1;
+    PatternStats s = {0};
+    pattern_count_for_color(&b, 1, &s);
+    ASSERT_EQ(s.counts[PAT_FIVE], 1, "for_color: anti-diag black 5 -> FIVE x1");
+}
+
+static void test_count_for_color_multiple_threes(void) {
+    Board b; board_init(&b);
+    for (int c = 4; c < 7; c++) b.cells[7][c] = 1;
+    for (int r = 9; r < 12; r++) b.cells[r][7] = 1;
+    PatternStats s = {0};
+    pattern_count_for_color(&b, 1, &s);
+    ASSERT_EQ(s.counts[PAT_OPEN_THREE], 2, "for_color: 2 separate open threes -> OPEN_THREE x2");
+}
+
 int main(void) {
     test_five_isolated();
     test_five_at_edge();
@@ -174,5 +216,10 @@ int main(void) {
     test_sleep_two_blocked();
     test_dead_two();
     test_single_stone_no_pattern();
+    test_count_for_color_horizontal();
+    test_count_for_color_vertical();
+    test_count_for_color_diagonal_main();
+    test_count_for_color_diagonal_anti();
+    test_count_for_color_multiple_threes();
     TEST_REPORT("test_pattern");
 }

@@ -45,9 +45,42 @@ void pattern_count_in_line(const int8_t *line, int len, int color, PatternStats 
     }
 }
 
-/* stub —— Task 7 实现 */
 void pattern_count_for_color(const Board *b, int color, PatternStats *out) {
-    (void)b; (void)color; (void)out;
+    int8_t line[BOARD_SIZE];
+
+    /* 横向：每行扫一次 */
+    for (int r = 0; r < BOARD_SIZE; r++) {
+        for (int c = 0; c < BOARD_SIZE; c++) line[c] = (int8_t)b->cells[r][c];
+        pattern_count_in_line(line, BOARD_SIZE, color, out);
+    }
+
+    /* 竖向：每列扫一次 */
+    for (int c = 0; c < BOARD_SIZE; c++) {
+        for (int r = 0; r < BOARD_SIZE; r++) line[r] = (int8_t)b->cells[r][c];
+        pattern_count_in_line(line, BOARD_SIZE, color, out);
+    }
+
+    /* 主对角（左上→右下，r-c = const） */
+    for (int diag = -(BOARD_SIZE - 1); diag <= BOARD_SIZE - 1; diag++) {
+        int n = 0;
+        for (int r = 0; r < BOARD_SIZE; r++) {
+            int c = r - diag;
+            if (c < 0 || c >= BOARD_SIZE) continue;
+            line[n++] = (int8_t)b->cells[r][c];
+        }
+        if (n >= 5) pattern_count_in_line(line, n, color, out);
+    }
+
+    /* 副对角（右上→左下，r+c = const） */
+    for (int diag = 0; diag <= 2 * (BOARD_SIZE - 1); diag++) {
+        int n = 0;
+        for (int r = 0; r < BOARD_SIZE; r++) {
+            int c = diag - r;
+            if (c < 0 || c >= BOARD_SIZE) continue;
+            line[n++] = (int8_t)b->cells[r][c];
+        }
+        if (n >= 5) pattern_count_in_line(line, n, color, out);
+    }
 }
 
 /* stub —— Task 8 实现 */
