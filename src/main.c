@@ -1,43 +1,29 @@
-/* src/main.c — Day 1 minimal self-play demo
- * 让黑白方各自调用 search_best_move 互下 10 步，打印过程。
- * Day 4 ui 模块完成后会被替换成正式 GUI。
+/* src/main.c — 入口
+ * 默认进入交互式 UI 主循环（人肉协议对战）。
+ *   --white      我方执白（默认黑）
+ *   --black      我方执黑（默认）
+ *   --depth=N    搜索深度（默认 4）
+ *   --demo       跑 self-play demo 而非 UI（回归测试用）
  */
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include "board.h"
 #include "search.h"
 #include "zobrist.h"
+#include "ui.h"
 
-static void print_board_minimal(const Board *b) {
-    printf("    ");
-    for (int c = 0; c < BOARD_SIZE; c++) printf("%c ", 'A' + c);
-    printf("\n");
-    for (int r = 0; r < BOARD_SIZE; r++) {
-        printf("%2d  ", BOARD_SIZE - r);
-        for (int c = 0; c < BOARD_SIZE; c++) {
-            uint8_t v = b->cells[r][c];
-            printf("%c ", v == EMPTY ? '.' : v == BLACK ? 'X' : 'O');
-        }
-        printf("\n");
-    }
-    printf("\n");
-}
-
-int main(void) {
-    zobrist_init();
-
+static void run_demo(int depth) {
     Board b;
     board_init(&b);
 
-    printf("gobang-engine self-play demo (10 plies, depth=3 with TT)\n\n");
+    printf("gobang-engine self-play demo (10 plies, depth=%d)\n\n", depth);
 
     long total_nodes = 0;
     for (int ply = 0; ply < 10; ply++) {
-        SearchResult r = search_best_move(&b, 3);
+        SearchResult r = search_best_move(&b, depth);
         total_nodes += r.nodes_searched;
-        if (r.best_move.row < 0) {
-            printf("No legal move. Stopping.\n");
-            break;
-        }
+        if (r.best_move.row < 0) { printf("No legal move.\n"); break; }
         const char *who = (b.side_to_move == BLACK) ? "BLACK(X)" : "WHITE(O)";
         printf("Ply %2d: %s plays %c%d  (score=%d, nodes=%ld)\n",
                ply + 1, who, 'A' + r.best_move.col, BOARD_SIZE - r.best_move.row,
@@ -46,13 +32,37 @@ int main(void) {
 
         GameResult res = board_check_winner(&b);
         if (res != RESULT_NONE) {
-            print_board_minimal(&b);
+            ui_draw_board(&b);
             printf("Game ended: result = %d\n", res);
-            return 0;
+            return;
         }
     }
 
-    print_board_minimal(&b);
-    printf("[Demo finished -- 10 plies, total nodes searched = %ld]\n", total_nodes);
+    ui_draw_board(&b);
+    printf("[Demo finished -- 10 plies, total nodes = %ld]\n", total_nodes);
+}
+
+int main(int argc, char **argv) {
+    zobrist_init();
+
+    int my_color = BLACK;
+    int depth = 4;
+    int demo_mode = 0;
+
+    for (int i = 1; i < argc; i++) {
+        if      (!strcmp(argv[i], "--white"))         my_color = WHITE;
+        else if (!strcmp(argv[i], "--black"))         my_color = BLACK;
+        else if (!strncmp(argv[i], "--depth=", 8))    depth = atoi(argv[i] + 8);
+        else if (!strcmp(argv[i], "--demo"))          demo_mode = 1;
+        else {
+            printf("Unknown option: %s\n", argv[i]);
+            printf("Usage: gobang-engine [--white|--black] [--depth=N] [--demo]\n");
+            return 1;
+        }
+    }
+
+    if (demo_mode) run_demo(depth);
+    else           ui_main_loop(my_color, depth);
+
     return 0;
 }
