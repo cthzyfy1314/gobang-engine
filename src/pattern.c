@@ -32,8 +32,11 @@ void pattern_count_in_line(const int8_t *line, int len, int color, PatternStats 
         } else if (run_len == 4) {
             if (open_count == 2)      out->counts[PAT_OPEN_FOUR]++;
             else if (open_count == 1) out->counts[PAT_SIMPLE_FOUR]++;
+        } else if (run_len == 3) {
+            if (open_count == 2)      out->counts[PAT_OPEN_THREE]++;
+            else if (open_count == 1) out->counts[PAT_SLEEP_THREE]++;
         }
-        /* run_len == 3, 2 在 Task 5/6 处理 */
+        /* run_len == 2 在 Task 6 处理 */
 
         i = j;
     }

@@ -94,6 +94,37 @@ static void test_dead_four(void) {
     ASSERT_EQ(s.counts[PAT_SIMPLE_FOUR], 0, "dead_four: not simple");
 }
 
+static void test_open_three(void) {
+    int8_t line[16]; PatternStats s = {0};
+    int n = build_line("___XXX___", line);
+    pattern_count_in_line(line, n, 1, &s);
+    ASSERT_EQ(s.counts[PAT_OPEN_THREE], 1, "open_three: ___XXX___ -> OPEN_THREE x1");
+    ASSERT_EQ(s.counts[PAT_SLEEP_THREE], 0, "open_three: not sleep_three");
+}
+
+static void test_sleep_three_blocked(void) {
+    int8_t line[16]; PatternStats s = {0};
+    int n = build_line("OXXX__", line);
+    pattern_count_in_line(line, n, 1, &s);
+    ASSERT_EQ(s.counts[PAT_SLEEP_THREE], 1, "sleep_three: OXXX__ -> SLEEP_THREE x1");
+    ASSERT_EQ(s.counts[PAT_OPEN_THREE], 0, "sleep_three: not open");
+}
+
+static void test_sleep_three_at_edge(void) {
+    int8_t line[16]; PatternStats s = {0};
+    int n = build_line("XXX___", line);
+    pattern_count_in_line(line, n, 1, &s);
+    ASSERT_EQ(s.counts[PAT_SLEEP_THREE], 1, "sleep_three: edge XXX___ -> SLEEP_THREE x1");
+}
+
+static void test_dead_three(void) {
+    int8_t line[16]; PatternStats s = {0};
+    int n = build_line("OXXXO", line);
+    pattern_count_in_line(line, n, 1, &s);
+    ASSERT_EQ(s.counts[PAT_OPEN_THREE], 0, "dead_three: not open");
+    ASSERT_EQ(s.counts[PAT_SLEEP_THREE], 0, "dead_three: not sleep");
+}
+
 int main(void) {
     test_five_isolated();
     test_five_at_edge();
@@ -105,5 +136,9 @@ int main(void) {
     test_simple_four_blocked_right();
     test_simple_four_at_edge();
     test_dead_four();
+    test_open_three();
+    test_sleep_three_blocked();
+    test_sleep_three_at_edge();
+    test_dead_three();
     TEST_REPORT("test_pattern");
 }
