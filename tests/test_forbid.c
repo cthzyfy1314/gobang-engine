@@ -180,6 +180,33 @@ static void test_occupied_returns_none(void) {
               "occupied: cell taken -> NONE");
 }
 
+/* === 回归测试：同方向双四（2026-05-16 修复的 bug）===
+ *
+ * 落 (7,7) 黑后，行 7 形成两个独立的"四"，threat 位置不同：
+ *   col:    3 4 5 6 7 8 9 10 11
+ *   piece:  B B B _ B _ B B  B
+ *
+ *   窗 [3..7] = (B B B _ B) → 4 黑 + 1 空（threat at col 6）→ four #1
+ *   窗 [7..11] = (B _ B B B) → 4 黑 + 1 空（threat at col 8）→ four #2
+ *
+ * 两个独立威胁，对手只能堵一个 → Renju 国规判 FORBID_DOUBLE_FOUR。
+ *
+ * 老版本 has_four_through_center 返回 boolean 漏掉这种 case。
+ * 现 count_fours_through_center 按 threat 去重计数后正确。
+ */
+static void test_double_four_same_direction(void) {
+    Board b; board_init(&b);
+    put(&b, 7, 3,  BLACK);
+    put(&b, 7, 4,  BLACK);
+    put(&b, 7, 5,  BLACK);
+    put(&b, 7, 9,  BLACK);
+    put(&b, 7, 10, BLACK);
+    put(&b, 7, 11, BLACK);
+    /* (7,6) (7,7) (7,8) 都空，落 (7,7) */
+    ASSERT_EQ(forbid_check_black(&b, 7, 7), FORBID_DOUBLE_FOUR,
+              "same_direction_double_four: 2 distinct fours in row -> FORBID_DOUBLE_FOUR");
+}
+
 int main(void) {
     test_overline_horizontal();
     test_five_only_no_forbid();
@@ -192,5 +219,6 @@ int main(void) {
     test_corner_no_false_positive();
     test_occupied_returns_none();
     test_four_plus_three_not_double_anything();
+    test_double_four_same_direction();   /* 回归：2026-05-16 修复的 bug */
     TEST_REPORT("test_forbid");
 }

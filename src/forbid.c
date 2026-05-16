@@ -29,35 +29,46 @@ static int center_run_length(const int8_t *line) {
     return len;
 }
 
-/* 统计该方向（line）上经过 center 的"四"棋型数（活四或冲四，含跳冲四）。
- * 返回 ≥ 1 表示该方向至少有一个四。简化：每个方向最多记 1 个有效四。
+/* 统计该方向（line）上经过 center 的"四"棋型 *数量*（活四或冲四，含跳冲四）。
+ *
+ * 同方向可能存在多个独立的"四"（threat 位置不同），都要计入。
+ * 用 threat position（5-window 内 empty 的位置）去重，避免同一个 four 被多个
+ * 重叠 5-window 重复算（典型：相邻两个 window 共享 4 个 black 子，threat 位置相同）。
+ *
+ * 这个 count 让 forbid_check_black 能识别"同一方向上的双四禁手"。
+ * 老版本返回 boolean 漏掉这种 case（2026-05-16 修复）。
  */
-static int has_four_through_center(const int8_t *line) {
-    /* 遍历所有 5 长度子串 line[i..i+4]，i 范围使窗口包含 center=5 即 i in [1,5] */
+static int count_fours_through_center(const int8_t *line) {
+    /* 用 4 个 black 子位置组合（bitmask）作为 four 的指纹去重：
+     *   活四 _XXXX_：相邻 2 个 5-window 共享同一组 4 子 → 1 个 four
+     *   跳冲四组合：4 子位置不同 → distinct fours
+     * 老版按 threat 位置去重把活四误算 2 → 引起 single_four 测试回归。
+     */
+    int seen_masks[8] = {0};
+    int n_seen = 0;
+    int count = 0;
     for (int i = 1; i <= 5; i++) {
         int blacks = 0, empties = 0, invalid = 0;
+        int mask = 0;
         for (int k = 0; k < 5; k++) {
             int v = line[i + k];
-            if (v == 1) blacks++;
+            if (v == 1) { blacks++; mask |= (1 << (i + k)); }
             else if (v == 0) empties++;
             else { invalid = 1; break; }
         }
         if (invalid) continue;
-        if (blacks == 4 && empties == 1) {
-            /* 找到一个"四"形式（5 长度，4 黑 + 1 空，无对手或边界）*/
-            int empty_pos = -1;
-            for (int k = 0; k < 5; k++) if (line[i + k] == 0) { empty_pos = k; break; }
+        if (blacks != 4 || empties != 1) continue;
 
-            if (empty_pos == 0 || empty_pos == 4) {
-                /* 空在端：4 子连续 → 简化版不严格区分活四/冲四，统一记一个"四" */
-                return 1;
-            } else {
-                /* 跳冲四（空在中间）*/
-                return 1;
-            }
+        int duplicate = 0;
+        for (int s = 0; s < n_seen; s++) {
+            if (seen_masks[s] == mask) { duplicate = 1; break; }
+        }
+        if (!duplicate) {
+            seen_masks[n_seen++] = mask;
+            count++;
         }
     }
-    return 0;
+    return count;
 }
 
 /* 统计该方向（line）上经过 center 的"形式上活三"数。
@@ -109,7 +120,7 @@ ForbidType forbid_check_black(const Board *b, int row, int col) {
 
     int five_count = 0;
     int overline_count = 0;
-    int four_dirs = 0;
+    int total_fours = 0;     /* 跨所有方向累加"四"的总数（同方向多个也算）*/
     int three_dirs = 0;
 
     for (int d = 0; d < 4; d++) {
@@ -126,8 +137,8 @@ ForbidType forbid_check_black(const Board *b, int row, int col) {
             continue;
         }
 
-        /* 非五连方向：统计四 / 三 */
-        if (has_four_through_center(line)) four_dirs++;
+        /* 非五连方向：累加四的个数 / 累加方向上"三"的有/无 */
+        total_fours += count_fours_through_center(line);
         if (count_open_threes_through_center(line) >= 1) three_dirs++;
     }
 
@@ -135,7 +146,7 @@ ForbidType forbid_check_black(const Board *b, int row, int col) {
     if (five_count > 0) return FORBID_NONE;
 
     if (overline_count > 0) return FORBID_OVERLINE;
-    if (four_dirs >= 2)    return FORBID_DOUBLE_FOUR;
+    if (total_fours >= 2)  return FORBID_DOUBLE_FOUR;
     if (three_dirs >= 2)   return FORBID_DOUBLE_THREE;
 
     return FORBID_NONE;
