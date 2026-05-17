@@ -38,26 +38,29 @@ static void test_generate_empty_board(void) {
 }
 
 static void test_generate_one_stone(void) {
-    /* 棋盘只有 (7,7) 黑子，周围 2 圈应是 5x5-1 = 24 个候选 */
+    /* 棋盘只有 (7,7) 黑子。v2 候选 = 5x5-1 = 24 (2 圈) + 8 个方向各延伸 3/4 cell（= 2×8 = 16）
+     * = 24 + 16 = 40
+     */
     Board b; board_init(&b);
     b.cells[7][7] = BLACK;
     b.move_count = 1;
     Move out[SEARCH_MAX_MOVES];
     int n = search_generate_neighbor_moves(&b, out);
-    ASSERT_EQ(n, 24, "generate: one stone at center -> 24 neighbors (5x5-1)");
+    ASSERT_EQ(n, 40, "generate: one stone at center -> 40 neighbors (5x5-1 + 8dir*2 extend)");
     int found_center = 0;
     for (int i = 0; i < n; i++) if (out[i].row == 7 && out[i].col == 7) found_center = 1;
     ASSERT_EQ(found_center, 0, "generate: occupied cell excluded");
 }
 
 static void test_generate_corner_stone(void) {
-    /* 角落 (0,0) 的 2 圈范围是 (0..2, 0..2) = 9 - 1 = 8 个 */
+    /* 角落 (0,0)：2 圈 8 个 + 3 个方向（右/下/右下）各延伸 2 cell = 8 + 6 = 14
+     * （左/上/左上方向越界，不计；左下、右上越界对角延伸也不计） */
     Board b; board_init(&b);
     b.cells[0][0] = BLACK;
     b.move_count = 1;
     Move out[SEARCH_MAX_MOVES];
     int n = search_generate_neighbor_moves(&b, out);
-    ASSERT_EQ(n, 8, "generate: corner stone -> 3x3-1 = 8 neighbors");
+    ASSERT_EQ(n, 14, "generate: corner stone -> 8 + 6 extend = 14 neighbors");
 }
 
 static void test_search_returns_legal_move(void) {
@@ -92,6 +95,34 @@ static void test_search_nodes_counted(void) {
     ASSERT_TRUE(r.nodes_searched > 0, "search: nodes_searched > 0");
 }
 
+static void test_vcf_immediate_five(void) {
+    /* 白方 4 连，下一步必胜，VCF 应该立刻找到 */
+    Board b; board_init(&b);
+    b.cells[7][3] = WHITE;
+    b.cells[7][4] = WHITE;
+    b.cells[7][5] = WHITE;
+    b.cells[7][6] = WHITE;
+    b.move_count = 4;
+    b.side_to_move = WHITE;
+    b.forbid_enabled = false;  /* 白不需要 forbid */
+
+    Move m;
+    int found = search_vcf(&b, 5, &m);
+    ASSERT_TRUE(found, "vcf: finds immediate win for white");
+    int legal = (m.row == 7 && (m.col == 2 || m.col == 7));
+    ASSERT_TRUE(legal, "vcf: returns (7,2) or (7,7)");
+}
+
+static void test_search_mate_score_not_overflow_eval(void) {
+    /* eval 量级（最多 ~1e6）远小于 mate threshold (1e8-1e4)，
+     * 普通残局 search_best_move 不应误判为 mate（防止 P0-4 旧实现的虚假 mate）
+     */
+    Board b; board_init(&b);
+    b.cells[7][7] = BLACK; b.move_count = 1; b.side_to_move = WHITE;
+    SearchResult r = search_best_move(&b, 2);
+    ASSERT_TRUE(!IS_MATE_SCORE(r.score), "search: normal position score is not mate-magnitude");
+}
+
 int main(void) {
     test_evaluate_empty();
     test_evaluate_open_three_beats_dead_three();
@@ -101,5 +132,7 @@ int main(void) {
     test_search_returns_legal_move();
     test_search_finds_immediate_win();
     test_search_nodes_counted();
+    test_vcf_immediate_five();
+    test_search_mate_score_not_overflow_eval();
     TEST_REPORT("test_search");
 }

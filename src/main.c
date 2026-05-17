@@ -2,7 +2,8 @@
  * 默认进入交互式 UI 主循环（人肉协议对战）。
  *   --white      我方执白（默认黑）
  *   --black      我方执黑（默认）
- *   --depth=N    搜索深度（默认 4）
+ *   --depth=N    搜索深度上限（默认 4）
+ *   --time=N     每步思考时间预算 (ms)（默认 1000；0 = 不限时）
  *   --demo       跑 self-play demo 而非 UI（回归测试用）
  */
 #include <stdio.h>
@@ -16,15 +17,18 @@
 #include "zobrist.h"
 #include "ui.h"
 
+static int _g_time_budget_ms = 1000;
+
 static void run_demo(int depth) {
     Board b;
     board_init(&b);
 
-    printf("gobang-engine self-play demo (10 plies, depth=%d)\n\n", depth);
+    printf("gobang-engine self-play demo (10 plies, depth=%d, time=%dms)\n\n",
+           depth, _g_time_budget_ms);
 
     long total_nodes = 0;
     for (int ply = 0; ply < 10; ply++) {
-        SearchResult r = search_best_move(&b, depth);
+        SearchResult r = search_best_move_timed(&b, depth, _g_time_budget_ms);
         total_nodes += r.nodes_searched;
         if (r.best_move.row < 0) { printf("No legal move.\n"); break; }
         const char *who = (b.side_to_move == BLACK) ? "BLACK(X)" : "WHITE(O)";
@@ -70,12 +74,16 @@ int main(int argc, char **argv) {
         else if (!strncmp(argv[i], "--depth=", 8)) {
             depth = atoi(argv[i] + 8);
             if (depth < 1)  depth = 1;
-            if (depth > 12) depth = 12;
+            if (depth > 20) depth = 20;
+        }
+        else if (!strncmp(argv[i], "--time=", 7)) {
+            _g_time_budget_ms = atoi(argv[i] + 7);
+            if (_g_time_budget_ms < 0) _g_time_budget_ms = 0;
         }
         else if (!strcmp(argv[i], "--demo"))          demo_mode = 1;
         else {
             printf("Unknown option: %s\n", argv[i]);
-            printf("Usage: gobang-engine [--white|--black] [--depth=N] [--demo]\n");
+            printf("Usage: gobang-engine [--white|--black] [--depth=N] [--time=MS] [--demo]\n");
             return 1;
         }
     }
