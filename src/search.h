@@ -42,14 +42,16 @@ SearchResult search_best_move_timed(Board *b, int max_depth, int time_budget_ms)
 SearchResult search_best_move(Board *b, int depth);
 
 /* VCF 专用搜索：仅扩展冲四/活四/连五，分支因子小可搜深度 20+
- * 找到时 out_seq 填入第一步着法，返回 1；否则返回 0。
+ * 找到时 out_first 填入第一步着法，返回 1；否则返回 0。
+ * out_nodes 可为 NULL；非 NULL 时累加内部节点数（供 stats 用）。
  */
-int search_vcf(Board *b, int max_depth, Move *out_first);
+int search_vcf(Board *b, int max_depth, Move *out_first, long *out_nodes);
 
 /* VCT 专用搜索：扩展所有 forcing moves（四威胁 + 活三威胁）
  * 找到时 out_first 填入第一步着法，返回 1；否则返回 0。
+ * out_nodes 可为 NULL；非 NULL 时累加内部节点数（供 stats 用）。
  */
-int search_vct(Board *b, int max_depth, Move *out_first);
+int search_vct(Board *b, int max_depth, Move *out_first, long *out_nodes);
 
 /* Placeholder 评估函数（4/30 起转发 pattern_evaluate）。
  * 返回值 > 0 表示对 side_to_move 有利。

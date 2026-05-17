@@ -107,7 +107,7 @@ static void test_vcf_immediate_five(void) {
     b.forbid_enabled = false;  /* 白不需要 forbid */
 
     Move m;
-    int found = search_vcf(&b, 5, &m);
+    int found = search_vcf(&b, 5, &m, NULL);
     ASSERT_TRUE(found, "vcf: finds immediate win for white");
     int legal = (m.row == 7 && (m.col == 2 || m.col == 7));
     ASSERT_TRUE(legal, "vcf: returns (7,2) or (7,7)");

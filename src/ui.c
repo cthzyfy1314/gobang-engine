@@ -235,14 +235,14 @@ static bool phase1_opening(Board *b, int my_color, int *out_N) {
     printf("\n=== Phase 1: Opening (national rule 4) ===\n");
     if (my_color == BLACK) {
         printf("You play BLACK. Decide opening: enter 3 coords (B1 W2 B3) and N.\n");
-        printf("  Format: <B1> <W2> <B3> <N>     e.g. H8 H9 J10 5    (= 花月, N=5)\n");
+        printf("  Format: <B1> <W2> <B3> <N>     e.g. H8 H9 I10 5    (= 花月, N=5)\n");
         printf("  Rule:   (B1, W2, B3) must be one of the 26 national-rule openings.\n");
         printf("          B1 is always H8 (tengen).\n");
         printf("  Type 'list' to see all 26 openings.  Type 'auto' to let engine pick one.\n");
         printf("  Note:   N = number of black-5 candidates you'll offer in phase 4.\n");
     } else {
         printf("You play WHITE. Enter the opening BLACK reported (3 coords + N).\n");
-        printf("  Format: <B1> <W2> <B3> <N>     e.g. H8 H9 J10 5    (= 花月, N=5)\n");
+        printf("  Format: <B1> <W2> <B3> <N>     e.g. H8 H9 I10 5    (= 花月, N=5)\n");
         printf("  Type 'list' to see all 26 openings.\n");
     }
 
@@ -258,12 +258,21 @@ static bool phase1_opening(Board *b, int my_color, int *out_N) {
             continue;
         }
 
-        /* 'auto' 命令（仅 AI 执黑时）：让引擎挑一种开局，仍需用户给 N */
-        if ((my_color == BLACK) &&
-            (strncmp(line, "auto", 4) == 0 || strncmp(line, "AUTO", 4) == 0)) {
+        /* 'auto' 命令仅 AI 执黑时可用 */
+        if (strncmp(line, "auto", 4) == 0 || strncmp(line, "AUTO", 4) == 0) {
+            if (my_color != BLACK) {
+                printf("'auto' is only available when AI plays BLACK. "
+                       "You play BLACK; enter the opening BLACK reported.\n");
+                continue;
+            }
+            /* 解析: "auto" 或 "auto N" 或 "auto N <trailing garbage>" */
             int N_in = 5;
-            /* auto 后面可跟一个 N */
-            if (sscanf(line, "%*s %d", &N_in) != 1) N_in = 5;
+            char extra[64] = {0};
+            int parsed = sscanf(line, "%*s %d %63s", &N_in, extra);
+            if (parsed < 1) N_in = 5;
+            if (parsed >= 2 && extra[0] != '\0') {
+                printf("Warning: extra tokens after 'auto N' ignored: '%s'\n", extra);
+            }
             if (N_in < 1 || N_in > 16) {
                 printf("N must be in [1, 16]. Got %d. Default to 5.\n", N_in);
                 N_in = 5;
@@ -348,31 +357,45 @@ static bool phase2_swap(Board *b, int *my_color) {
         printf(">>> Engine score (current as WHITE): %d\n", score_as_white);
         const char *advice = (score_as_white < -300) ? "**SWAP** (WHITE seems losing)" : "**KEEP WHITE** (no swap)";
         printf(">>> Engine advice: %s\n", advice);
-        printf("Your decision (1 = keep WHITE, 2 = swap to BLACK) > ");
-        fflush(stdout);
-        if (!read_line(line, sizeof(line))) return false;
-        if (line[0] == '2') {
-            *my_color = BLACK;
-            printf(">>> You swapped. You now play BLACK. Tell opponent.\n");
-            return true;
+        /* 严格 1/2 校验，错误输入循环重提 */
+        while (1) {
+            printf("Your decision (1 = keep WHITE, 2 = swap to BLACK) > ");
+            fflush(stdout);
+            if (!read_line(line, sizeof(line))) return false;
+            /* trim leading whitespace then check single char + only-whitespace-after */
+            const char *p = line; while (*p == ' ' || *p == '\t') p++;
+            if ((*p == '1' || *p == '2') && (p[1] == '\0' || p[1] == '\n' || p[1] == '\r')) {
+                if (*p == '2') {
+                    *my_color = BLACK;
+                    printf(">>> You swapped. You now play BLACK. Tell opponent.\n");
+                    return true;
+                }
+                printf(">>> You kept WHITE. Tell opponent.\n");
+                return false;
+            }
+            printf("Invalid. Enter exactly '1' or '2'. Try again.\n");
         }
-        printf(">>> You kept WHITE. Tell opponent.\n");
-        return false;
     } else {
         /* 我执黑：等对方报告是否换 */
         printf("Wait for opponent's decision and enter:\n");
         printf("  1 = opponent keeps WHITE (no swap)\n");
         printf("  2 = opponent SWAPS (you become WHITE)\n");
-        printf("[Phase 2] > ");
-        fflush(stdout);
-        if (!read_line(line, sizeof(line))) return false;
-        if (line[0] == '2') {
-            *my_color = WHITE;
-            printf(">>> Opponent swapped. You now play WHITE.\n");
-            return true;
+        while (1) {
+            printf("[Phase 2] > ");
+            fflush(stdout);
+            if (!read_line(line, sizeof(line))) return false;
+            const char *p = line; while (*p == ' ' || *p == '\t') p++;
+            if ((*p == '1' || *p == '2') && (p[1] == '\0' || p[1] == '\n' || p[1] == '\r')) {
+                if (*p == '2') {
+                    *my_color = WHITE;
+                    printf(">>> Opponent swapped. You now play WHITE.\n");
+                    return true;
+                }
+                printf(">>> Opponent kept WHITE. You stay BLACK.\n");
+                return false;
+            }
+            printf("Invalid. Enter exactly '1' or '2'. Try again.\n");
         }
-        printf(">>> Opponent kept WHITE. You stay BLACK.\n");
-        return false;
     }
 }
 
@@ -415,7 +438,9 @@ static bool phase4_n_strikes(Board *b, int my_color, int N, int search_depth) {
         printf(">>> B5 = %s (chosen by opponent)\n", buf);
         return true;
     } else {
-        /* 我执白：录入对方报的 N 个候选，引擎挑最不利黑方的一个 */
+        /* 我执白：录入对方报的 N 个候选，引擎挑最不利黑方的一个。
+         * 校验：每个候选必须是空格、未占用、未与之前候选重复。
+         */
         printf("Opponent will report %d candidate B5 positions. Enter them one per line.\n", N);
         Move cands[16];
         int got = 0;
@@ -423,8 +448,15 @@ static bool phase4_n_strikes(Board *b, int my_color, int N, int search_depth) {
             printf("Candidate %d/%d > ", got + 1, N);
             fflush(stdout);
             if (!read_line(line, sizeof(line))) return false;
+            if (line[0] == 'q' || line[0] == 'Q') return false;
             int r, c;
             if (!parse_coord(line, &r, &c)) { printf("Bad coord. Re-enter.\n"); continue; }
+            if (b->cells[r][c] != EMPTY) { printf("Cell already occupied. Re-enter.\n"); continue; }
+            int dup = 0;
+            for (int k = 0; k < got; k++) {
+                if (cands[k].row == r && cands[k].col == c) { dup = 1; break; }
+            }
+            if (dup) { printf("Duplicate of an earlier candidate. Re-enter.\n"); continue; }
             cands[got].row = (int8_t)r;
             cands[got].col = (int8_t)c;
             cands[got].color = BLACK;

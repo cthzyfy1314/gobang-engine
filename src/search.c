@@ -523,11 +523,12 @@ static int vcx_search(Board *b, int ply, int depth_left, int allow_three, long *
     return 0;
 }
 
-int search_vcf(Board *b, int max_depth, Move *out_first) {
+int search_vcf(Board *b, int max_depth, Move *out_first, long *out_nodes) {
     b->zobrist_hash = zobrist_compute(b);
     Move choice = { -1, -1, (int8_t)b->side_to_move };
     long nodes = 0;
     int score = vcx_search(b, 0, max_depth, 0 /*VCF: no threes*/, &nodes, &choice);
+    if (out_nodes) *out_nodes += nodes;
     if (score >= SEARCH_INF - SEARCH_MATE_MARGIN && choice.row >= 0) {
         if (out_first) *out_first = choice;
         return 1;
@@ -535,11 +536,12 @@ int search_vcf(Board *b, int max_depth, Move *out_first) {
     return 0;
 }
 
-int search_vct(Board *b, int max_depth, Move *out_first) {
+int search_vct(Board *b, int max_depth, Move *out_first, long *out_nodes) {
     b->zobrist_hash = zobrist_compute(b);
     Move choice = { -1, -1, (int8_t)b->side_to_move };
     long nodes = 0;
     int score = vcx_search(b, 0, max_depth, 1 /*VCT: allow open-three*/, &nodes, &choice);
+    if (out_nodes) *out_nodes += nodes;
     if (score >= SEARCH_INF - SEARCH_MATE_MARGIN && choice.row >= 0) {
         if (out_first) *out_first = choice;
         return 1;
@@ -575,7 +577,7 @@ SearchResult search_best_move_timed(Board *b, int max_depth, int time_budget_ms)
     if (time_budget_ms != 0) {
         Move vcf_choice;
         if (!_time_up) {
-            int vcf_found = search_vcf(b, 20, &vcf_choice);
+            int vcf_found = search_vcf(b, 20, &vcf_choice, &result.nodes_searched);
             if (vcf_found) {
                 result.best_move = vcf_choice;
                 result.score = SEARCH_INF - b->move_count - 1;
