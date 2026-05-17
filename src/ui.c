@@ -9,6 +9,7 @@
 #include "forbid.h"
 #include "pattern.h"
 #include "zobrist.h"
+#include "opening.h"
 
 /* 把内部 (row, col) 转成 H8 风格字符串（写入 buf，假定 buf >= 4 字节）*/
 static const char *coord_to_str(int row, int col, char *buf) {
@@ -202,10 +203,31 @@ static bool parse_coord(const char *s, int *row, int *col) {
 
 /* === 阶段 1：开局录入 ===
  * 录入前 3 手（黑1/白2/黑3）+ N（五手 N 打的 N）。
- * 简化：让用户直接输 3 个坐标（manual 模式），不强制 26 种开局表。
- * AI 执黑：用户输自己想下的开局；AI 执白：用户输对方报的开局。
+ * 国规要求 B1+W2+B3 必须形成 26 种指定开局之一（见 opening.c）。
+ * AI 执黑：用户报自己想下的开局；AI 执白：用户报对方报的开局。
  * 返回：成功返回 true，board 已落 3 子；失败/quit 返回 false。
  */
+
+/* 列出全部 26 种开局，附编号 + 名字 + 三手坐标。 */
+static void list_all_openings(void) {
+    printf("\nAvailable 26 openings (B1=H8 always). Pick by name or by 3 coords:\n");
+    printf("  --- Direct (W2=H9) ---                       --- Indirect (W2=I9) ---\n");
+    char b1s[8], w2s[8], b3s[8];
+    /* 13 直指 + 13 斜指 = 13 行 * 2 列 = 13 行 */
+    for (int row = 0; row < 13; row++) {
+        const RenjuOpening *d = opening_get(row);          /* 直指 0..12 */
+        const RenjuOpening *i = opening_get(row + 13);     /* 斜指 13..25 */
+        coord_to_str(d->b1[0], d->b1[1], b1s);
+        coord_to_str(d->w2[0], d->w2[1], w2s);
+        coord_to_str(d->b3[0], d->b3[1], b3s);
+        printf("  %2d) %-8s %-10s %s %s %s   |", row + 1, d->name_cn, d->name_jp, b1s, w2s, b3s);
+        coord_to_str(i->b1[0], i->b1[1], b1s);
+        coord_to_str(i->w2[0], i->w2[1], w2s);
+        coord_to_str(i->b3[0], i->b3[1], b3s);
+        printf("  %2d) %-8s %-10s %s %s %s\n", row + 14, i->name_cn, i->name_jp, b1s, w2s, b3s);
+    }
+}
+
 static bool phase1_opening(Board *b, int my_color, int *out_N) {
     char line[128];
     int target_N = 5;
@@ -213,12 +235,15 @@ static bool phase1_opening(Board *b, int my_color, int *out_N) {
     printf("\n=== Phase 1: Opening (national rule 4) ===\n");
     if (my_color == BLACK) {
         printf("You play BLACK. Decide opening: enter 3 coords (B1 W2 B3) and N.\n");
-        printf("  Format: <coord1> <coord2> <coord3> <N>     e.g. H8 I9 I7 5\n");
-        printf("  Rule:   B1 must be H8 (tengen). B3 must be inside 5x5 around H8.\n");
+        printf("  Format: <B1> <W2> <B3> <N>     e.g. H8 H9 J10 5    (= 花月, N=5)\n");
+        printf("  Rule:   (B1, W2, B3) must be one of the 26 national-rule openings.\n");
+        printf("          B1 is always H8 (tengen).\n");
+        printf("  Type 'list' to see all 26 openings.  Type 'auto' to let engine pick one.\n");
         printf("  Note:   N = number of black-5 candidates you'll offer in phase 4.\n");
     } else {
         printf("You play WHITE. Enter the opening BLACK reported (3 coords + N).\n");
-        printf("  Format: <coord1> <coord2> <coord3> <N>     e.g. H8 I9 I7 5\n");
+        printf("  Format: <B1> <W2> <B3> <N>     e.g. H8 H9 J10 5    (= 花月, N=5)\n");
+        printf("  Type 'list' to see all 26 openings.\n");
     }
 
     while (1) {
@@ -227,11 +252,45 @@ static bool phase1_opening(Board *b, int my_color, int *out_N) {
         if (!read_line(line, sizeof(line))) return false;
         if (line[0] == 'q' || line[0] == 'Q') return false;
 
-        /* 解析 4 个 token */
+        /* 'list' 命令：列出全部 26 种 */
+        if (strncmp(line, "list", 4) == 0 || strncmp(line, "LIST", 4) == 0) {
+            list_all_openings();
+            continue;
+        }
+
+        /* 'auto' 命令（仅 AI 执黑时）：让引擎挑一种开局，仍需用户给 N */
+        if ((my_color == BLACK) &&
+            (strncmp(line, "auto", 4) == 0 || strncmp(line, "AUTO", 4) == 0)) {
+            int N_in = 5;
+            /* auto 后面可跟一个 N */
+            if (sscanf(line, "%*s %d", &N_in) != 1) N_in = 5;
+            if (N_in < 1 || N_in > 16) {
+                printf("N must be in [1, 16]. Got %d. Default to 5.\n", N_in);
+                N_in = 5;
+            }
+            int idx = opening_choose_by_black_strategy();
+            const RenjuOpening *o = opening_get(idx);
+            if (!o) { printf("opening_choose_by_black_strategy returned bad idx.\n"); continue; }
+            if (!board_place(b, o->b1[0], o->b1[1], BLACK))    { printf("B1 conflict.\n"); continue; }
+            if (!board_place(b, o->w2[0], o->w2[1], WHITE))    { printf("W2 conflict.\n"); board_undo(b); continue; }
+            if (!board_place(b, o->b3[0], o->b3[1], BLACK))    { printf("B3 conflict.\n"); board_undo(b); board_undo(b); continue; }
+            char b1s[8], b2s[8], b3s[8];
+            coord_to_str(o->b1[0], o->b1[1], b1s);
+            coord_to_str(o->w2[0], o->w2[1], b2s);
+            coord_to_str(o->b3[0], o->b3[1], b3s);
+            target_N = N_in;
+            printf(">>> Engine picked opening #%d: %s (%s)\n", idx + 1, o->name_cn, o->name_jp);
+            printf(">>> Phase 1 done: B1=%s W2=%s B3=%s, N=%d. Report this to opponent.\n",
+                   b1s, b2s, b3s, target_N);
+            *out_N = target_N;
+            return true;
+        }
+
+        /* 解析 4 个 token: 3 个坐标 + N */
         char t1[16], t2[16], t3[16];
         int N_in;
         if (sscanf(line, "%15s %15s %15s %d", t1, t2, t3, &N_in) != 4) {
-            printf("Need 4 tokens: 3 coords + N. Try again.\n");
+            printf("Need 4 tokens: 3 coords + N. Type 'list' to see all 26 openings.\n");
             continue;
         }
         int r1, c1, r2, c2, r3, c3;
@@ -239,16 +298,17 @@ static bool phase1_opening(Board *b, int my_color, int *out_N) {
             printf("Bad coordinate. Try again.\n");
             continue;
         }
-        /* 验证 B1 = H8 (tengen) */
+        /* 验证 B1 = H8 (tengen) — 26 种全要求 */
         if (r1 != 7 || c1 != 7) {
             printf("Rule 4: B1 must be H8 (tengen). Got %s. Try again.\n", t1);
             continue;
         }
-        /* 验证 B3 在 5x5 内 (|dr|<=2 && |dc|<=2) */
-        int dr = r3 - 7, dc = c3 - 7;
-        if (dr < 0) dr = -dr; if (dc < 0) dc = -dc;
-        if (dr > 2 || dc > 2) {
-            printf("Rule 4: B3 must be within 5x5 around tengen. Got %s. Try again.\n", t3);
+        /* 验证 (B1, W2, B3) 是 26 种之一 */
+        int opening_idx = -1;
+        if (!opening_matches(r1, c1, r2, c2, r3, c3, &opening_idx)) {
+            printf("Rule 4: (B1=%s, W2=%s, B3=%s) is NOT one of the 26 national-rule openings.\n",
+                   t1, t2, t3);
+            printf("        Type 'list' to see the valid 26.  Try again.\n");
             continue;
         }
         if (N_in < 1 || N_in > 16) {
@@ -260,8 +320,10 @@ static bool phase1_opening(Board *b, int my_color, int *out_N) {
         if (!board_place(b, r2, c2, WHITE)) { printf("W2 invalid (occupied?).\n"); board_undo(b); continue; }
         if (!board_place(b, r3, c3, BLACK)) { printf("B3 invalid.\n"); board_undo(b); board_undo(b); continue; }
         target_N = N_in;
+        const RenjuOpening *o = opening_get(opening_idx);
         char b1s[8], b2s[8], b3s[8];
         coord_to_str(r1, c1, b1s); coord_to_str(r2, c2, b2s); coord_to_str(r3, c3, b3s);
+        printf(">>> Opening #%d: %s (%s)\n", opening_idx + 1, o->name_cn, o->name_jp);
         printf(">>> Phase 1 done: B1=%s W2=%s B3=%s, N=%d\n", b1s, b2s, b3s, target_N);
         *out_N = target_N;
         return true;
@@ -478,6 +540,11 @@ void ui_main_loop(int my_color, int search_depth) {
     while (1) {
         res = board_check_winner(&b);
         if (res != RESULT_NONE) {
+            /* P2-2 note: RESULT_WHITE_WIN_BY_BLACK_FORBID is currently never returned
+             * by board_check_winner (国规 9.1 长连禁手 → 已直接映射成 RESULT_WHITE_WIN_NORMAL）。
+             * 此分支保留作 future-proof：若后续禁手判负独立成"白胜（黑禁手）"语义，
+             * board.c 可直接返回该值，UI 文案无需改。
+             */
             const char *msg = (res == RESULT_BLACK_WIN)                 ? "BLACK wins!" :
                               (res == RESULT_WHITE_WIN_NORMAL)          ? "WHITE wins!" :
                               (res == RESULT_WHITE_WIN_BY_BLACK_FORBID) ? "WHITE wins (BLACK forbid)!" :
