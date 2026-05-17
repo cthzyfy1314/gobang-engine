@@ -51,58 +51,62 @@ void pattern_count_in_line(const int8_t *line, int len, int color, PatternStats 
 /* 跳/缝棋型识别：扫描固定大小的窗口，找带缝的潜在威胁。
  * 与 pattern_count_in_line 互补——后者只看连续段，这里看带空格的同色组合。
  *
- * 检测：
- *   5-window:  4 同色 + 1 空（且空不在窗口边）→ PAT_BROKEN_FOUR
- *              (XX_XX / X_XXX / XXX_X — 填缝成五)
- *   6-window: _XX_X_ / _X_XX_  → PAT_JUMP_OPEN_THREE
- *   7-window: _X_XXX_ / _XX_XX_ / _XXX_X_  → PAT_JUMP_OPEN_FOUR
+ * P0-2 dedup：pattern_count_in_line 已经计入所有连续段（含 3-/4-/5-连），
+ * 本函数只计入 run-scan 看不见的"独立带缝威胁"，并对嵌入 3-consec 重复算的
+ * OPEN_THREE 做扣减。
  *
- * 排除重复：5-window 中如果同色子全连续（gap 在边），由原 pattern_count_in_line 处理，
- *           这里通过 "gap_pos 不能在 0 或 4" 来避免重复计数。
+ * 规则：
+ *   5-window 只取 gap_pos==2 (XX_XX) —— split-four，run-scan 完全看不见
+ *     gap_pos=1 (X_XXX) / gap_pos=3 (XXX_X) 的内 3-consec 已被 run-scan 算 3，跳过
+ *   6-window _XX_X_ / _X_XX_ —— jump open three，3-consec 不存在所以无重复
+ *   7-window _X_XXX_ / _XXX_X_ —— jump open four，减 1 OPEN_THREE 去重内 3-consec
+ *           _XX_XX_ —— 3-consec 不存在所以无重复
  */
 static void count_broken_in_line(const int8_t *line, int len, int color, PatternStats *out) {
     int8_t op = (color == 1) ? 2 : 1;
+    int B = (int8_t)color;
 
-    /* 5-window: 4 same + 1 gap (gap not on edge) */
+    /* 5-window XX_XX：4 same + gap at center (gap_pos=2) */
     for (int i = 0; i + 5 <= len; i++) {
-        int same = 0, empty = 0, gap_pos = -1, bad = 0;
-        for (int k = 0; k < 5; k++) {
-            int8_t v = line[i + k];
-            if      (v == (int8_t)color) same++;
-            else if (v == 0)             { empty++; gap_pos = k; }
-            else                          { bad = 1; break; }
+        if (line[i]==B && line[i+1]==B && line[i+2]==0 && line[i+3]==B && line[i+4]==B) {
+            out->counts[PAT_BROKEN_FOUR]++;
         }
-        if (bad || same != 4 || empty != 1) continue;
-        if (gap_pos == 0 || gap_pos == 4) continue;   /* 边上 gap 是连续段，交给 run-scan 处理 */
-        out->counts[PAT_BROKEN_FOUR]++;
     }
 
     /* 6-window: _XX_X_ / _X_XX_ (jump open three) */
     for (int i = 0; i + 6 <= len; i++) {
         if (line[i] != 0 || line[i + 5] != 0) continue;
-        /* 内部 4 格：3 same + 1 empty，且 same 不全连续 */
         int8_t a = line[i+1], b = line[i+2], c = line[i+3], d = line[i+4];
-        /* _XX_X_ */
-        if (a == (int8_t)color && b == (int8_t)color && c == 0 && d == (int8_t)color) {
-            out->counts[PAT_JUMP_OPEN_THREE]++;
-        }
-        /* _X_XX_ */
-        else if (a == (int8_t)color && b == 0 && c == (int8_t)color && d == (int8_t)color) {
+        if ((a==B && b==B && c==0 && d==B) ||
+            (a==B && b==0 && c==B && d==B)) {
             out->counts[PAT_JUMP_OPEN_THREE]++;
         }
     }
 
-    /* 7-window: _X_XXX_ / _XX_XX_ / _XXX_X_ (jump open four) */
+    /* 7-window: _X_XXX_ / _XX_XX_ / _XXX_X_ (jump open four)
+     * For _X_XXX_ and _XXX_X_, the embedded 3-consec was already counted by
+     * run-scan as OPEN_THREE; decrement to avoid double-count.
+     */
     for (int i = 0; i + 7 <= len; i++) {
         if (line[i] != 0 || line[i + 6] != 0) continue;
         int8_t a = line[i+1], b = line[i+2], c = line[i+3], d = line[i+4], e = line[i+5];
-        int B = (int8_t)color;
-        /* _X_XXX_ */
-        if (a==B && b==0 && c==B && d==B && e==B) { out->counts[PAT_JUMP_OPEN_FOUR]++; continue; }
-        /* _XX_XX_ */
-        if (a==B && b==B && c==0 && d==B && e==B) { out->counts[PAT_JUMP_OPEN_FOUR]++; continue; }
-        /* _XXX_X_ */
-        if (a==B && b==B && c==B && d==0 && e==B) { out->counts[PAT_JUMP_OPEN_FOUR]++; continue; }
+        /* _X_XXX_ : 3-consec at line[i+3..i+5] → already OPEN_THREE */
+        if (a==B && b==0 && c==B && d==B && e==B) {
+            out->counts[PAT_JUMP_OPEN_FOUR]++;
+            out->counts[PAT_OPEN_THREE]--;
+            continue;
+        }
+        /* _XX_XX_ : no 3-consec, no dedup */
+        if (a==B && b==B && c==0 && d==B && e==B) {
+            out->counts[PAT_JUMP_OPEN_FOUR]++;
+            continue;
+        }
+        /* _XXX_X_ : 3-consec at line[i+1..i+3] → already OPEN_THREE */
+        if (a==B && b==B && c==B && d==0 && e==B) {
+            out->counts[PAT_JUMP_OPEN_FOUR]++;
+            out->counts[PAT_OPEN_THREE]--;
+            continue;
+        }
     }
     (void)op;  /* opponent color reserved for future use */
 }
