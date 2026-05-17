@@ -16,24 +16,66 @@ static const char *coord_to_str(int row, int col, char *buf) {
     return buf;
 }
 
+/* ANSI VT escape macros — main.c 已开 ENABLE_VIRTUAL_TERMINAL_PROCESSING */
+#define ANSI_RESET   "\x1b[0m"
+#define ANSI_DIM     "\x1b[2m"
+#define ANSI_BOLD    "\x1b[1m"
+#define ANSI_GRAY    "\x1b[90m"     /* dim gray — 空交叉点 */
+#define ANSI_BLACK   "\x1b[1;36m"   /* bold cyan — 黑子（深色背景下也可见）*/
+#define ANSI_WHITE   "\x1b[1;33m"   /* bold yellow — 白子 */
+#define ANSI_STAR    "\x1b[35m"     /* magenta — 星点 */
+#define ANSI_LAST    "\x1b[1;91m"   /* bold bright red — 最后一手高亮 */
+
+/* 国规 Renju 15x15 的 5 个星点：H8 天元 + 4 角星 D4/L4/D12/L12 */
+static int is_star_point(int r, int c) {
+    return (r == 7  && c == 7)  ||  /* H8 tengen */
+           (r == 3  && c == 3)  ||  /* D12 */
+           (r == 3  && c == 11) ||  /* L12 */
+           (r == 11 && c == 3)  ||  /* D4 */
+           (r == 11 && c == 11);    /* L4 */
+}
+
 void ui_draw_board(const Board *b) {
-    printf("\n     A  B  C  D  E  F  G  H  I  J  K  L  M  N  O\n");
+    /* 最后一手坐标（用于高亮）*/
+    int last_r = -1, last_c = -1;
+    if (b->move_count > 0) {
+        last_r = b->history[b->move_count - 1].row;
+        last_c = b->history[b->move_count - 1].col;
+    }
+
+    /* 顶部字母列标 */
+    printf("\n      ");
+    for (int c = 0; c < BOARD_SIZE; c++) printf(" %c ", 'A' + c);
+    printf("\n");
+
     for (int r = 0; r < BOARD_SIZE; r++) {
-        printf("%2d ", BOARD_SIZE - r);
+        printf("  %2d  ", BOARD_SIZE - r);
         for (int c = 0; c < BOARD_SIZE; c++) {
             uint8_t v = b->cells[r][c];
-            const char *s = (v == EMPTY) ? " . " :
-                            (v == BLACK) ? " X " :
-                                           " O ";
-            printf("%s", s);
+            int is_last = (r == last_r && c == last_c);
+
+            if (v == EMPTY) {
+                if (is_star_point(r, c)) {
+                    printf(" " ANSI_STAR "+" ANSI_RESET " ");
+                } else {
+                    printf(" " ANSI_GRAY "." ANSI_RESET " ");
+                }
+            } else if (v == BLACK) {
+                if (is_last) printf(ANSI_LAST "[X]" ANSI_RESET);
+                else         printf(" " ANSI_BLACK "X" ANSI_RESET " ");
+            } else { /* WHITE */
+                if (is_last) printf(ANSI_LAST "[O]" ANSI_RESET);
+                else         printf(" " ANSI_WHITE "O" ANSI_RESET " ");
+            }
         }
-        printf(" %2d\n", BOARD_SIZE - r);
+        printf("\n");
     }
-    printf("     A  B  C  D  E  F  G  H  I  J  K  L  M  N  O\n");
-    printf("    X = BLACK, O = WHITE.  moves=%u  side=%s%s\n\n",
+
+    printf("\n  " ANSI_DIM "moves=%u  side=" ANSI_RESET "%s%s  " ANSI_DIM "%s" ANSI_RESET "\n\n",
            b->move_count,
-           b->side_to_move == BLACK ? "BLACK" : "WHITE",
-           b->forbid_enabled ? "  [renju forbid: ON]" : "  [forbid: OFF]");
+           b->side_to_move == BLACK ? ANSI_BLACK "BLACK" ANSI_RESET : ANSI_WHITE "WHITE" ANSI_RESET,
+           "",
+           b->forbid_enabled ? "[renju forbid: ON]" : "[forbid: OFF]");
 }
 
 static int letter_to_col(char ch) {

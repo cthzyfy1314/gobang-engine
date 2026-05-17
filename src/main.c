@@ -51,6 +51,12 @@ int main(int argc, char **argv) {
      * 切到 UTF-8 (65001)。如果切换失败也无伤大雅（程序输出已尽量 ASCII-safe）。
      */
     SetConsoleOutputCP(65001);
+    /* 启用 ANSI VT 转义（Win10+），让 ui.c 里的颜色 escape sequence 真的渲染。*/
+    HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+    DWORD mode = 0;
+    if (hOut != INVALID_HANDLE_VALUE && GetConsoleMode(hOut, &mode)) {
+        SetConsoleMode(hOut, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+    }
 #endif
     zobrist_init();
 
