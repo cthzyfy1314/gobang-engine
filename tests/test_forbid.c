@@ -207,6 +207,143 @@ static void test_double_four_same_direction(void) {
               "same_direction_double_four: 2 distinct fours in row -> FORBID_DOUBLE_FOUR");
 }
 
+/* === P2-9: forbid four 计数边界 case ===
+ * 巩固 count_fours_through_center 在贴边 + 相邻 window 共享黑子的边沿情况。
+ *
+ * 测试 1: 贴边活四
+ *   落 (0,4) 黑后行 0 有 (0,1)(0,2)(0,3)(0,5) = B，加 center 形成 X X X X 在 col 1..4 + col 5=B
+ *   → 实际是 (0,1)..(0,5) 连续 5 黑 = 五连 → 优先五连规则
+ *   改：(0,1)(0,2)(0,3) + center (0,4) → 4 连黑（col 1..4），(0,0)=越界，(0,5)=_
+ *   → 一端被边界堵 + 一端空 = SIMPLE_FOUR (1 four)；单方向单 four → 非禁手
+ */
+static void test_edge_four_not_double(void) {
+    Board b; board_init(&b);
+    put(&b, 0, 1, BLACK);
+    put(&b, 0, 2, BLACK);
+    put(&b, 0, 3, BLACK);
+    /* 落 (0,4)：横向 (0,1..4) = 4 连黑，左侧边界堵，右侧空 → 1 个 four
+     * 其他方向都无威胁 → NONE */
+    ASSERT_EQ(forbid_check_black(&b, 0, 4), FORBID_NONE,
+              "edge_four: 4 in row at edge, only 1 four-dir -> not forbidden");
+}
+
+/* 测试 2: 同方向 _BBBB_ 活四 mask 去重
+ *   落 (7,7) 黑后行 7 形成 _ B B B B _ B B _：但要避免成 5 连。
+ *   构造 (7,4)(7,5)(7,6) 黑 + center (7,7) → 横 col 4..7 = 4 黑连
+ *   (7,3)=_, (7,8)=_：活四，2 个 5-window 共享 mask → 应记 1 个 four
+ *   另外造 1 个不相干方向的活四 → 跨方向 total_fours=2 → DOUBLE_FOUR
+ *   竖向 (4,7)(5,7)(6,7) 黑 + center (7,7) → 竖 row 4..7 4 黑连 + (3,7)=_ (8,7)=_ 活四
+ *   横 1 + 竖 1 = 2 four → DOUBLE_FOUR。
+ *   这就是 test_double_four 已覆盖的 case。
+ *
+ * 真正巩固 mask 去重：让横向有两个相邻活四 5-window 共享 mask 但确实算 1 个，
+ *   保证不被误算成 2。+ 另一方向再 1 four → 应 total=2 → DOUBLE_FOUR（不是 3）。
+ *   实际效果一致；只是验证 mask 去重在贴边窗口边界仍正确。
+ */
+static void test_open_four_mask_dedup_at_edge(void) {
+    Board b; board_init(&b);
+    /* 横向 4 连贴近边界 (0,0..3)：落 (0,0)，(0,1)(0,2)(0,3) 黑
+     *   line center=col 0，line[5]=B(假定), line[6..8]=B(col 1..3), line[9]=_(col 4)
+     *   line[0..4]=越界(-1)，line[5]=1, line[6..8]=1, line[9]=0, line[10]=0
+     *   5-windows: i=1..5（要 line[i..i+4] 全合法）
+     *     i=1..4 都含 -1 跳过
+     *     i=5: [1,1,1,1,0] → 4 黑 1 空(at 9)？mask=0b...，5+6+7+8 位 → 1 个 four
+     *     count_fours_through_center 返回 1
+     *   单方向 1 four → 不双四 → NONE
+     */
+    put(&b, 0, 1, BLACK);
+    put(&b, 0, 2, BLACK);
+    put(&b, 0, 3, BLACK);
+    ASSERT_EQ(forbid_check_black(&b, 0, 0), FORBID_NONE,
+              "edge_open_four_dedup: BBBB at corner, 1 four-dir -> not forbidden");
+}
+
+/* === P1-2: 真活三 vs 形式活三 ===
+ * 形式 `_XXX_` 但两端 _ 再外侧都被 WHITE 堵 → 落子任一端只能成冲四（一端被白堵），
+ * 不是真活三。两个方向都这种"形式但非真"的活三 → 不应触发双三禁手。
+ *
+ * 构造（横方向）：落 (7,7) 黑后 line=[?,W,_,B,B,B,_,W,?]，center=line[5]=col 7=B。
+ *   (7,3)=W, (7,5)(7,6)=B, (7,9)=W；中心 (7,7) 假定落黑后 _XXX_ 在 col 5..7，
+ *   但 col 8=_ 后面 col 9=W → 右侧延伸 _XXXX_ 不可成真活四。
+ *   类似左侧 col 4=_ 后面 col 3=W → 左侧延伸也不可。
+ *
+ * 同样构造另一方向（竖）。两方向"形式三"但"非真活三" → 应 FORBID_NONE。
+ */
+static void test_true_open_three_vs_formal(void) {
+    Board b; board_init(&b);
+    /* 横向 */
+    put(&b, 7, 3, WHITE);
+    put(&b, 7, 5, BLACK);
+    put(&b, 7, 6, BLACK);
+    put(&b, 7, 9, WHITE);
+    /* 竖向 */
+    put(&b, 3, 7, WHITE);
+    put(&b, 5, 7, BLACK);
+    put(&b, 6, 7, BLACK);
+    put(&b, 9, 7, WHITE);
+    /* 形式上两方向都活三，但延伸成不了真活四 → 非真活三 → 非禁手 */
+    ASSERT_EQ(forbid_check_black(&b, 7, 7), FORBID_NONE,
+              "true_open_three: formal _XXX_ blocked by outer-outer WHITE -> not forbidden");
+}
+
+/* === P1-3: 贴边 _XXX_ 边界假阳性 ===
+ * 落 (0,2) 黑后横向贴边 line=[B,B,B,_,?,?,?,...]，center=col 2 是 B。
+ *   line 居中坐标：center=line[5]=(0,2)=B(假定)。
+ *   k=-2 → (0,0)=B, k=-1 → (0,1)=B, k=0 → center=B, k=1 → (0,3)=_,
+ *   k=-3..k=-5 越界 → line[0..2]=-1
+ *   即 line = [-1,-1,-1,1,1,1,0,?,?,?,?]，
+ *   形式 _XXX_ 在 i=2: line[2]=-1, line[3..5]=B, line[4]=0 → 但 line[2]≠0 → 不匹配。
+ *   再考虑 i=3: line[3..7]=1,1,1,0,? → line[3]≠0 → 不匹配。
+ *   贴边 BBB_ 在形式判定中本来就不是 _XXX_（左侧无 _）。
+ *
+ * 真正的"贴边假阳性"场景：(0,0)..(0,2)=_,B,B + center=(0,3)=B → 形式 _XXX_，左端是真 _，
+ *   但向左延伸 _XXXX_ 需要 (0,-1)=越界 → outer_left = -1。
+ *   老版本 outer_left==1 才排除，-1 不排除 → 形式三仍计入 → 假阳性。
+ *   新 P1-3 修复后 outer_left == -1 也排除。
+ *
+ * 测试：落 (0,3) 黑，横向 (0,1)(0,2)=B + 形式 _XXX_ 在 col 1..3。
+ *       但 (0,0) 是 _，左外为越界。再加竖向相同形态 (1,3)(2,3)=B，竖向边界类似。
+ *       双方向都贴边 → 老版双三假阳性；新版应 NONE。
+ */
+static void test_edge_open_three_no_false_positive(void) {
+    Board b; board_init(&b);
+    /* 横向 (0,1)(0,2)=B，落 (0,3)，(0,0)=_, (0,4)=_ */
+    put(&b, 0, 1, BLACK);
+    put(&b, 0, 2, BLACK);
+    /* 竖向 (1,3)(2,3)=B，落 (0,3)，(3,3)=_, 向上越界 */
+    put(&b, 1, 3, BLACK);
+    put(&b, 2, 3, BLACK);
+    /* (0,3) center：横 line center=col 3
+     *   line=[-1,-1,-1,-1,1,1,0,0,0,0,0]: center=line[5]=B(假定)，左 line[3]=B(0,2), line[4]=?(0,1)=B
+     *   wait 重新: k=-5..5 对应 col=-2..8。col=-2,-1 越界(-1), col=0=_, col=1=B, col=2=B, col=3=center=B, col=4..8=_
+     *   line[0]=-1, line[1]=-1, line[2]=0(col 0), line[3]=1(col 1), line[4]=1(col 2),
+     *   line[5]=1(center), line[6..10]=0(col 4..8)
+     *   形式 _XXX_ 在 i=2: line[2]=0, line[3..5]=1,1,1, line[6]=0 → ✓
+     *   center 5 ∈ [3..5] ✓; outer_left=line[1]=-1 → 新版排除；outer_right=line[6]=0 → OK
+     *   新版排除 → 0 个形式三 → 真三 0
+     * 类似竖方向。两方向都因贴边被排除 → 非双三 → FORBID_NONE
+     */
+    ASSERT_EQ(forbid_check_black(&b, 0, 3), FORBID_NONE,
+              "edge_open_three: _XXX_ adjacent to board edge -> not true open three");
+}
+
+/* === P1-2: 真活三确实算（正向验证）===
+ * 真正的双真活三（_XXX_ 两端外侧都是真 EMPTY）→ 应触发 FORBID_DOUBLE_THREE
+ * 跟 test_double_three 类似，但显式确认我们没把所有活三都判废。
+ * 落 (7,7)：横 (7,5)(7,6)=B → _XXX_ in col 4..8，外侧 col 3..9 都空；
+ *           竖同。两个真真活三 → DOUBLE_THREE
+ */
+static void test_true_double_three_still_forbidden(void) {
+    Board b; board_init(&b);
+    put(&b, 7, 5, BLACK);
+    put(&b, 7, 6, BLACK);
+    put(&b, 5, 7, BLACK);
+    put(&b, 6, 7, BLACK);
+    /* 周围都空 → 两方向真活三 */
+    ASSERT_EQ(forbid_check_black(&b, 7, 7), FORBID_DOUBLE_THREE,
+              "true_double_three: two truly open threes -> FORBID_DOUBLE_THREE");
+}
+
 int main(void) {
     test_overline_horizontal();
     test_five_only_no_forbid();
@@ -220,5 +357,10 @@ int main(void) {
     test_occupied_returns_none();
     test_four_plus_three_not_double_anything();
     test_double_four_same_direction();   /* 回归：2026-05-16 修复的 bug */
+    test_true_open_three_vs_formal();    /* P1-2: 真活三 vs 形式活三 */
+    test_edge_open_three_no_false_positive(); /* P1-3: 贴边假阳性 */
+    test_true_double_three_still_forbidden(); /* P1-2 正向：真双活三仍判禁 */
+    test_edge_four_not_double();         /* P2-9: 贴边 four 边界 */
+    test_open_four_mask_dedup_at_edge(); /* P2-9: mask 去重在边界 */
     TEST_REPORT("test_forbid");
 }

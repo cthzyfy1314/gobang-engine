@@ -71,48 +71,95 @@ static int count_fours_through_center(const int8_t *line) {
     return count;
 }
 
-/* 统计该方向（line）上经过 center 的"形式上活三"数。
- * 形式：
- *   _XXX_   连续活三（6 长度窗口 0,1,1,1,0,?）
- *   _XX_X_  / _X_XX_  跳活三（6 长度窗口）
- * 返回该方向匹配数（最多 2，但通常 ≤ 1）。
+/* 真活三判定：以 line 居中（center=line[5]=BLACK 假定）为前提，
+ * 是否存在经过 center 的"真活三"——即可在 1 手内变成"真活四"（连续 4 子双端开放）。
  *
- * 索引说明：
- *   连续 _XXX_：3 黑子在 i+1..i+3，"center 必须在 3 黑子之中" → 5 ∈ [i+1, i+3]
- *   跳 _XX_X_ / _X_XX_：黑子分布在 i+1..i+4 范围内，"center 在黑子区间" → 5 ∈ [i+1, i+4]
+ * 算法（双层模拟）：
+ *   1. 枚举本方向上经过 center 的所有"3 子黑棋组合"（含跳形）
+ *      —— 形式 `_XXX_` 与 `_XX_X_` / `_X_XX_`
+ *   2. 对每个形式活三组合，尝试在它的"延伸位"再落一手 BLACK
+ *      —— 即 6 长度窗口内的两个 _ 位置之一，以及（对连续 _XXX_）内部不需要填
+ *      —— 实际上：对每种形式，可以填的"成四位"是固定的几个 slot
+ *   3. 落第二手后，调用 line_has_true_open_four 看是否形成 4 连双端开放
+ *   4. 任一延伸位可形成 → 真活三
+ *
+ * 简化实现：遍历所有 line 上的 EMPTY 位置 (line[k]==0)，模拟在 k 处放 BLACK，
+ *           看新 line 上是否出现真活四 + center 仍在该 four 中。这样省去枚举形式。
  */
-static int count_open_threes_through_center(const int8_t *line) {
-    int count = 0;
-    /* 形式 1: 连续活三 _XXX__ 或 __XXX_。要求 center 在 3 黑子之中 */
-    for (int i = 0; i <= 5; i++) {
-        if (i + 5 > 10) break;
+static int is_true_open_three_through_center(const int8_t *line) {
+    int len = 11;
+    /* 必须先满足"形式活三"的存在（中心方向上的形式 _XXX_ / _XX_X_ / _X_XX_），
+     * 否则即使有可成四的延伸位，也不是经过 center 的活三威胁。
+     * 沿用旧的 count_open_threes_through_center 形式检测：找到 ≥1 个形式三再做延伸验证。
+     */
+    int has_formal_three = 0;
+    /* 形式 1: 连续活三 */
+    for (int i = 0; i <= len - 5; i++) {
         if (line[i] == 0 && line[i+1] == 1 && line[i+2] == 1 && line[i+3] == 1
             && line[i+4] == 0) {
-            /* center=5 必须在 3 黑子位置 i+1..i+3 之中 */
             if (5 < i + 1 || 5 > i + 3) continue;
-            /* 排除"被冲四吞噬"的情形：左右扩展若是 BLACK 则该 _XXX_ 实际是更长段的子集，跳过 */
             int outer_left  = (i - 1 >= 0)  ? line[i - 1]  : -1;
-            int outer_right = (i + 5 <= 10) ? line[i + 5] : -1;
-            if (outer_left == 1 || outer_right == 1) continue;
-            count++;
+            int outer_right = (i + 5 < len) ? line[i + 5] : -1;
+            if (outer_left == 1 || outer_left == -1) continue;
+            if (outer_right == 1 || outer_right == -1) continue;
+            has_formal_three = 1;
+            break;
         }
     }
-    /* 形式 2: 跳活三 _XX_X_ 或 _X_XX_（6 长度窗口）*/
-    for (int i = 0; i <= 4; i++) {
-        if (i + 5 > 10) continue;
-        /* _XX_X_ */
-        if (line[i] == 0 && line[i+1] == 1 && line[i+2] == 1
-            && line[i+3] == 0 && line[i+4] == 1 && line[i+5] == 0) {
-            if (5 >= i+1 && 5 <= i+4) count++;
-        }
-        /* _X_XX_ */
-        else if (line[i] == 0 && line[i+1] == 1 && line[i+2] == 0
-                 && line[i+3] == 1 && line[i+4] == 1 && line[i+5] == 0) {
-            if (5 >= i+1 && 5 <= i+4) count++;
+    /* 形式 2: 跳活三 */
+    if (!has_formal_three) {
+        for (int i = 0; i <= len - 6; i++) {
+            int8_t a = line[i], f = line[i+5];
+            if (a != 0 || f != 0) continue;
+            int8_t b = line[i+1], c = line[i+2], d = line[i+3], e = line[i+4];
+            int hit = 0;
+            if (b==1 && c==1 && d==0 && e==1) hit = 1;        /* _XX_X_ */
+            else if (b==1 && c==0 && d==1 && e==1) hit = 1;   /* _X_XX_ */
+            if (!hit) continue;
+            if (5 < i + 1 || 5 > i + 4) continue;
+            has_formal_three = 1;
+            break;
         }
     }
-    return count;
+    if (!has_formal_three) return 0;
+
+    /* 延伸验证：尝试每个 EMPTY 位置 (line[k]==0) 落 BLACK，看是否出现真活四
+     * 且新形成的 4 连包含 center=5（保证是"经过 center 的活四"，而非旁路活四）。
+     */
+    int8_t sim[11];
+    for (int k = 0; k < len; k++) {
+        if (line[k] != 0) continue;
+        if (k == 5) continue;  /* center 已是 BLACK，跳过 */
+        for (int j = 0; j < len; j++) sim[j] = line[j];
+        sim[k] = 1;
+
+        /* 检查 sim 上是否有真活四 _XXXX_，且该 4 子段包含 center=5 */
+        for (int i = 0; i + 5 <= len; i++) {
+            if (sim[i] != 0) continue;
+            if (sim[i+1] != 1 || sim[i+2] != 1 || sim[i+3] != 1 || sim[i+4] != 1) continue;
+            if (i + 5 >= len) continue;
+            if (sim[i + 5] != 0) continue;
+            /* 4 子段 [i+1..i+4] 必须包含 center=5 */
+            if (5 < i + 1 || 5 > i + 4) continue;
+            return 1;
+        }
+    }
+    return 0;
 }
+
+/* 统计该方向（line）上经过 center 的"真活三"数。
+ * 真活三 = 1 手内可形成"真活四"（连续 4 子双端开放）的活三。
+ *
+ * P1-2: 旧实现只做形式判定（`_XXX_` / `_XX_X_` / `_X_XX_`），现升级为递归式
+ *       双层模拟：找到形式三后再尝试每个延伸位看能否成真活四。
+ *
+ * 注意：同一方向上通常 ≤ 1 真活三（多个形式三共享 center 极罕见），
+ *       返回 0 / 1 即可。
+ */
+static int count_open_threes_through_center(const int8_t *line) {
+    return is_true_open_three_through_center(line) ? 1 : 0;
+}
+
 
 ForbidType forbid_check_black(const Board *b, int row, int col) {
     if (!board_in_bounds(row, col)) return FORBID_NONE;
