@@ -12,15 +12,18 @@
 #include "board.h"
 
 typedef enum {
-    PAT_NONE        = 0,
-    PAT_SLEEP_TWO   = 1,   /* 眠二：一端被堵的 2 连 */
-    PAT_OPEN_TWO    = 2,   /* 活二：双端开放的 2 连 */
-    PAT_SLEEP_THREE = 3,   /* 眠三：一端被堵的 3 连 */
-    PAT_OPEN_THREE  = 4,   /* 活三：双端开放的 3 连 */
-    PAT_SIMPLE_FOUR = 5,   /* 冲四：一端被堵的 4 连 */
-    PAT_OPEN_FOUR   = 6,   /* 活四：双端开放的 4 连 */
-    PAT_FIVE        = 7,   /* 五连（含 ≥6 长连）*/
-    PAT_COUNT       = 8
+    PAT_NONE             = 0,
+    PAT_SLEEP_TWO        = 1,   /* 眠二：一端被堵的 2 连 */
+    PAT_OPEN_TWO         = 2,   /* 活二：双端开放的 2 连 */
+    PAT_SLEEP_THREE      = 3,   /* 眠三：一端被堵的 3 连 */
+    PAT_OPEN_THREE       = 4,   /* 活三：双端开放的 3 连 */
+    PAT_SIMPLE_FOUR      = 5,   /* 冲四：一端被堵的 4 连 */
+    PAT_OPEN_FOUR        = 6,   /* 活四：双端开放的 4 连 */
+    PAT_FIVE             = 7,   /* 五连（含 ≥6 长连）*/
+    PAT_BROKEN_FOUR      = 8,   /* 跳冲四：5 窗内 4 同色 + 1 空（空不在边）→ 填缝成 5 */
+    PAT_JUMP_OPEN_THREE  = 9,   /* 跳活三：_XX_X_ / _X_XX_ → 下一手成活四 */
+    PAT_JUMP_OPEN_FOUR   = 10,  /* 跳活四：_X_XXX_ / _XX_XX_ / _XXX_X_ → 填缝成五连 */
+    PAT_COUNT            = 11
 } Pattern;
 
 /* 评分表（spec § 3.2）。索引由 Pattern 枚举决定。 */
