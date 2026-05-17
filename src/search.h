@@ -68,7 +68,10 @@ int search_generate_neighbor_moves(const Board *b, Move *out);
 /* 重置搜索状态（清 TT + killer + history + tt_generation）。新游戏开始时调用。 */
 void search_reset(void);
 
-/* 五手 N 打（国规 7） */
-int search_find_n_distinct(Board *b, int depth, int n_want, Move *out, int *out_scores);
+/* 五手 N 打（国规 7）
+ * time_budget_ms: 时间预算(ms)；<=0 不限时。超时时仍尽量返回已搜的候选（按分数排序）。
+ */
+int search_find_n_distinct(Board *b, int depth, int n_want, Move *out, int *out_scores,
+                           int time_budget_ms);
 
 #endif /* SEARCH_H_ */

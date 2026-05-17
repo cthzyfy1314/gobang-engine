@@ -89,7 +89,7 @@ int main(int argc, char **argv) {
     }
 
     if (demo_mode) run_demo(depth);
-    else           ui_main_loop(my_color, depth);
+    else           ui_main_loop(my_color, depth, _g_time_budget_ms);
 
     return 0;
 }

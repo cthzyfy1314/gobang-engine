@@ -144,8 +144,8 @@ bool ui_parse_input(const char *line, int *row, int *col, UICommand *cmd) {
     return false;
 }
 
-static void show_engine_suggestion(Board *b, int depth) {
-    SearchResult r = search_best_move(b, depth);
+static void show_engine_suggestion(Board *b, int depth, int time_budget_ms) {
+    SearchResult r = search_best_move_timed(b, depth, time_budget_ms);
     char buf[8];
     if (r.best_move.row < 0) {
         printf(">>> Engine: no legal move available.\n");
@@ -164,14 +164,22 @@ static void show_engine_suggestion(Board *b, int depth) {
     }
 }
 
-static void warn_forbid_for_black(const Board *b, int row, int col) {
-    if (b->side_to_move != BLACK || !b->forbid_enabled) return;
+/* 返回 FORBID_NONE 表示该格落黑合法；否则返回禁手类型并把人类可读名写入 *out_name。
+ * out_name 缓冲区由调用方提供（>=32 字节）。
+ */
+static ForbidType check_black_forbid(const Board *b, int row, int col, char *out_name) {
+    if (b->side_to_move != BLACK || !b->forbid_enabled) return FORBID_NONE;
     ForbidType ft = forbid_check_black(b, row, col);
-    if (ft == FORBID_NONE) return;
+    if (ft == FORBID_NONE) return FORBID_NONE;
     const char *name = (ft == FORBID_DOUBLE_THREE) ? "DOUBLE THREE (33)" :
                        (ft == FORBID_DOUBLE_FOUR)  ? "DOUBLE FOUR (44)"  :
                                                      "OVERLINE (>=6)";
-    printf("\n*** FORBID warning at this position: %s ***\n", name);
+    if (out_name) {
+        size_t i = 0;
+        while (name[i] && i < 31) { out_name[i] = name[i]; i++; }
+        out_name[i] = '\0';
+    }
+    return ft;
 }
 
 /* === 国规序号显示辅助：根据 move_count + color 给出 "黑1/白2/黑3..." === */
@@ -402,7 +410,7 @@ static bool phase2_swap(Board *b, int *my_color) {
 /* === 阶段 4：五手 N 打（国规 7） ===
  * 黑方提供 N 个候选，白方挑一个作黑5。
  */
-static bool phase4_n_strikes(Board *b, int my_color, int N, int search_depth) {
+static bool phase4_n_strikes(Board *b, int my_color, int N, int search_depth, int time_budget_ms) {
     char line[128];
     printf("\n=== Phase 4: 5th-move N-strikes (national rule 7) ===\n");
 
@@ -411,7 +419,7 @@ static bool phase4_n_strikes(Board *b, int my_color, int N, int search_depth) {
         Move cands[16];
         int scores[16];
         printf("[Engine computing %d candidate B5 moves...]\n", N);
-        int got = search_find_n_distinct(b, search_depth, N, cands, scores);
+        int got = search_find_n_distinct(b, search_depth, N, cands, scores, time_budget_ms);
         if (got == 0) {
             printf("No legal candidate. Resign.\n");
             return false;
@@ -484,16 +492,16 @@ static bool phase4_n_strikes(Board *b, int my_color, int N, int search_depth) {
 }
 
 /* === 单步：要么 AI 自动出，要么录入对方坐标 === */
-static bool phase5_one_turn(Board *b, int my_color, int search_depth) {
+static bool phase5_one_turn(Board *b, int my_color, int search_depth, int time_budget_ms) {
     char line[128];
     int active = b->side_to_move;
     int next_move_no = b->move_count + 1;
     char label[8]; move_label(next_move_no, active, label);
 
     if (active == my_color) {
-        printf("[AI thinking %s @ d=%d ...]\n", label, search_depth);
+        printf("[AI thinking %s @ d=%d t=%dms ...]\n", label, search_depth, time_budget_ms);
         fflush(stdout);
-        SearchResult r = search_best_move(b, search_depth);
+        SearchResult r = search_best_move_timed(b, search_depth, time_budget_ms);
         if (r.best_move.row < 0) {
             printf(">>> AI: no legal move. Resigning.\n"); return false;
         }
@@ -523,7 +531,21 @@ static bool phase5_one_turn(Board *b, int my_color, int search_depth) {
             if (cmd == UI_CMD_RESIGN) { printf("Resigned.\n"); return false; }
             printf("Invalid. Re-enter.\n"); continue;
         }
-        if (active == BLACK) warn_forbid_for_black(b, row, col);
+        if (active == BLACK) {
+            char fname[32];
+            ForbidType ft = check_black_forbid(b, row, col, fname);
+            if (ft != FORBID_NONE) {
+                /* 国规 9.x：黑棋禁手 → 白胜（不允许落子，直接判负） */
+                char buf[8]; coord_to_str(row, col, buf);
+                printf("\n*** BLACK plays forbidden move %s at %s ***\n", fname, buf);
+                printf("*** Game over: WHITE wins (BLACK forbid) ***\n");
+                /* 真的落子，让后续的 board_check_winner 也能拿到一致状态。
+                 * 但 winner 已经先在这里决出，主循环的 board_check_winner 会因为没五连而返回 NONE。
+                 * 因此我们在这里直接 return false（结束）+ 自己打印结果。
+                 */
+                return false;
+            }
+        }
         if (!board_place(b, row, col, active)) {
             printf("Illegal (occupied/oob).\n"); continue;
         }
@@ -533,7 +555,7 @@ static bool phase5_one_turn(Board *b, int my_color, int search_depth) {
     }
 }
 
-void ui_main_loop(int my_color, int search_depth) {
+void ui_main_loop(int my_color, int search_depth, int time_budget_ms) {
     Board b;
     board_init(&b);
 
@@ -541,6 +563,8 @@ void ui_main_loop(int my_color, int search_depth) {
     printf("AI plays:        %s\n", my_color == BLACK ? "BLACK (X)" : "WHITE (O)");
     printf("You relay for:   %s (the opponent)\n", my_color == BLACK ? "WHITE (O)" : "BLACK (X)");
     printf("Search depth:    %d\n", search_depth);
+    printf("Time budget/mv:  %s\n", time_budget_ms > 0 ? "see ms below" : "unlimited");
+    if (time_budget_ms > 0) printf("                 %d ms\n", time_budget_ms);
     printf("Flow follows spec section 6 phases 0-5: opening / swap / W4 / N-strikes / loop.\n");
 
     /* 阶段 1：开局 (3 手 + N) */
@@ -562,14 +586,14 @@ void ui_main_loop(int my_color, int search_depth) {
     GameResult res = board_check_winner(&b);
     if (res == RESULT_NONE) {
         printf("\n=== Phase 3: White 4 (national rule 4) ===\n");
-        if (!phase5_one_turn(&b, my_color, search_depth)) return;
+        if (!phase5_one_turn(&b, my_color, search_depth, time_budget_ms)) return;
         ui_draw_board(&b);
     }
 
     /* 阶段 4：B5 = 五手 N 打 */
     res = board_check_winner(&b);
     if (res == RESULT_NONE) {
-        if (!phase4_n_strikes(&b, my_color, N, search_depth)) return;
+        if (!phase4_n_strikes(&b, my_color, N, search_depth, time_budget_ms)) return;
         ui_draw_board(&b);
     }
 
@@ -590,7 +614,7 @@ void ui_main_loop(int my_color, int search_depth) {
             printf("\n*** Game over: %s ***\n", msg);
             return;
         }
-        if (!phase5_one_turn(&b, my_color, search_depth)) return;
+        if (!phase5_one_turn(&b, my_color, search_depth, time_budget_ms)) return;
         ui_draw_board(&b);
     }
 }

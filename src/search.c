@@ -191,7 +191,8 @@ static int alphabeta(Board *b, int ply, int depth_left, int alpha, int beta, lon
 static int vcx_search(Board *b, int ply, int depth_left, int allow_three, long *nodes, Move *root_choice);
 
 /* ============== search_find_n_distinct ============== */
-int search_find_n_distinct(Board *b, int depth, int n_want, Move *out, int *out_scores) {
+int search_find_n_distinct(Board *b, int depth, int n_want, Move *out, int *out_scores,
+                           int time_budget_ms) {
     b->zobrist_hash = zobrist_compute(b);
     tt_clear();
     clear_killers_history();
@@ -206,18 +207,49 @@ int search_find_n_distinct(Board *b, int depth, int n_want, Move *out, int *out_
     int valid_idx[SEARCH_MAX_MOVES];
 
     int alpha = -SEARCH_INF, beta = SEARCH_INF;
-    _deadline = 0; _time_up = 0;  /* 不限时 */
+
+    /* time budget setup（与 search_best_move_timed 同机制）*/
+    _budget_ms = time_budget_ms;
+    if (time_budget_ms > 0) {
+        _deadline = clock() + (clock_t)((long long)time_budget_ms * CLOCKS_PER_SEC / 1000);
+    } else {
+        _deadline = 0;
+    }
+    _time_up = 0;
+
+    /* Pass 1：合法性预筛（不搜索），保证 valid_n > 0 不依赖于时间 */
+    int color = b->side_to_move;
     for (int i = 0; i < n; i++) {
-        int color = b->side_to_move;
         if (color == BLACK && b->forbid_enabled) {
             if (forbid_check_black(b, moves[i].row, moves[i].col) != FORBID_NONE) continue;
         }
         if (!board_place(b, moves[i].row, moves[i].col, color)) continue;
-        int score = -alphabeta(b, 1, depth - 1, -beta, -alpha, &nodes_dummy);
         board_undo(b);
-        scores[valid_n] = score;
+        scores[valid_n] = 0;            /* 占位分数，被 ID 覆盖 */
         valid_idx[valid_n] = i;
         valid_n++;
+    }
+    if (valid_n == 0) return 0;
+
+    /* Pass 2：iterative deepening，每完整搜完一层才提交分数。
+     * 时间不够时退回最后一个完整层的结果。
+     */
+    int tmp_scores[SEARCH_MAX_MOVES];
+    for (int d = 1; d <= depth; d++) {
+        if (check_time()) break;
+        int complete = 1;
+        for (int j = 0; j < valid_n; j++) {
+            if (check_time()) { complete = 0; break; }
+            int i = valid_idx[j];
+            if (!board_place(b, moves[i].row, moves[i].col, color)) { complete = 0; break; }
+            int s = -alphabeta(b, 1, d - 1, -beta, -alpha, &nodes_dummy);
+            board_undo(b);
+            if (_time_up) { complete = 0; break; }
+            tmp_scores[j] = s;
+        }
+        if (complete) {
+            for (int j = 0; j < valid_n; j++) scores[j] = tmp_scores[j];
+        }
     }
 
     int picked = 0;

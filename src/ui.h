@@ -16,8 +16,9 @@ typedef enum {
 /* 启动 UI 主循环。返回时游戏已结束或用户退出。
  * my_color: 我方执子颜色（BLACK 或 WHITE）。
  * search_depth: αβ 最大搜索深度。
+ * time_budget_ms: 每步思考预算(ms)；<=0 不限时。
  */
-void ui_main_loop(int my_color, int search_depth);
+void ui_main_loop(int my_color, int search_depth, int time_budget_ms);
 
 /* 绘制当前棋盘到 stdout。 */
 void ui_draw_board(const Board *b);
