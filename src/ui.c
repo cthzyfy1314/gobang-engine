@@ -398,11 +398,17 @@ static bool phase4_n_strikes(Board *b, int my_color, int N, int search_depth) {
             char buf[8]; coord_to_str(cands[i].row, cands[i].col, buf);
             printf("    %d) %s   (score=%d)%s\n", i + 1, buf, scores[i], i == 0 ? "  [engine top pick]" : "");
         }
-        printf("Enter the index (1..%d) opponent picked > ", got);
-        fflush(stdout);
-        if (!read_line(line, sizeof(line))) return false;
-        int idx = atoi(line);
-        if (idx < 1 || idx > got) { printf("Invalid index.\n"); return false; }
+        /* 错误输入不退出，循环重提 */
+        int idx = 0;
+        while (1) {
+            printf("Enter the index (1..%d) opponent picked, or 'q' to quit > ", got);
+            fflush(stdout);
+            if (!read_line(line, sizeof(line))) return false;
+            if (line[0] == 'q' || line[0] == 'Q') return false;
+            idx = atoi(line);
+            if (idx >= 1 && idx <= got) break;
+            printf("Invalid index. Need 1..%d (the position number, not a coordinate). Try again.\n", got);
+        }
         Move pick = cands[idx - 1];
         char buf[8]; coord_to_str(pick.row, pick.col, buf);
         if (!board_place(b, pick.row, pick.col, BLACK)) { printf("B5 conflict.\n"); return false; }
