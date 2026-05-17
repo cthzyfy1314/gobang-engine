@@ -62,11 +62,20 @@ static int count_run(const Board *b, int r, int c, int dr, int dc, int color) {
     return count;
 }
 
-/* 对每个 cells[r][c]==color 的格子，沿 4 方向（向后）看最长连子。
+/* 对每个 cells[r][c]==color 的格子，沿 4 方向扫描所有 maximal run。
  * 只从一段的"起点"开始计数（前一格不是同色），避免重复。
+ * 输出：
+ *   *out_max_run        — 该 color 所有 run 中的最大值（0 表示无该色子）
+ *   *out_has_exact_five — 是否存在某 maximal run 恰好等于 5
+ *
+ * 关键：必须用 maximal run（前一格非同色 + 沿方向扫到非同色为止），
+ * 才能把"6 连"识别为长度 6 而不是误认为"包含一个长度 5 的子段"。
+ * 这是国规 9.2-c 判定的几何基础——"存在恰好 5 连"必须是真正独立的 5 连段。
  */
-static int max_run_for_color(const Board *b, int color) {
+static void runs_for_color(const Board *b, int color,
+                           int *out_max_run, int *out_has_exact_five) {
     int max_run = 0;
+    int has_five = 0;
     static const int dirs[4][2] = { {0,1}, {1,0}, {1,1}, {1,-1} };
     for (int r = 0; r < BOARD_SIZE; r++) {
         for (int c = 0; c < BOARD_SIZE; c++) {
@@ -76,31 +85,32 @@ static int max_run_for_color(const Board *b, int color) {
                 int prev_r = r - dr, prev_c = c - dc;
                 if (board_in_bounds(prev_r, prev_c) &&
                     b->cells[prev_r][prev_c] == (uint8_t)color) {
-                    continue;
+                    continue;  /* 不是 maximal run 的起点 */
                 }
                 int run = count_run(b, r, c, dr, dc, color);
                 if (run > max_run) max_run = run;
+                if (run == 5) has_five = 1;
             }
         }
     }
-    return max_run;
+    if (out_max_run)        *out_max_run        = max_run;
+    if (out_has_exact_five) *out_has_exact_five = has_five;
 }
 
 GameResult board_check_winner(const Board *b) {
-    int black_max = max_run_for_color(b, BLACK);
-    int white_max = max_run_for_color(b, WHITE);
+    int black_max = 0, black_has_5 = 0;
+    int white_max = 0;
+    runs_for_color(b, BLACK, &black_max, &black_has_5);
+    runs_for_color(b, WHITE, &white_max, NULL);
 
-    /* 国规不对称（Spec § 1.4 国规 9.1）：
-     *   白 ≥5 连（含长连）→ 白胜
-     *   黑 ==5 连 → 黑胜
-     *   黑 ≥6 连（长连禁手）→ 白胜
+    /* 国规不对称（Spec § 1.4 国规 9.1 + 9.2-c）：
+     *   白 ≥5 连（含长连）→ 白胜（白长连视同五连）
+     *   黑 存在某方向恰好 5 连 → 黑胜（9.2-c：五连优先，即便另一方向同时形成长连）
+     *   黑 ≥6 连且无任何方向恰好 5 连 → 白胜（长连禁手）
      *   全盘满 → 和棋
-     *
-     * Day 1 暂不处理"黑五连+禁手同时形成→五连优先"细节，
-     * 那是 forbid 模块的事（Spec § 3.4 + § 1.4 国规 9.2-c）。
      */
     if (white_max >= 5) return RESULT_WHITE_WIN_NORMAL;
-    if (black_max == 5) return RESULT_BLACK_WIN;
+    if (black_has_5)    return RESULT_BLACK_WIN;
     if (black_max >= 6) return RESULT_WHITE_WIN_NORMAL;
     if (board_is_full(b)) return RESULT_DRAW;
     return RESULT_NONE;

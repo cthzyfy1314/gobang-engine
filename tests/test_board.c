@@ -160,6 +160,38 @@ static void test_winner_4_in_row_no_win(void) {
     ASSERT_EQ(board_check_winner(&b), RESULT_NONE, "winner: only 4 in row = no win");
 }
 
+static void test_winner_black_five_and_overline_priority(void) {
+    /* 国规 9.2-c：黑五连和黑禁手（含长连）同时形成 → 五连优先 → 黑胜。
+     *
+     * 构造：以 (7,7) 为 pivot
+     *   水平方向 (7,5)..(7,9) — 恰好 5 连（左右两侧 (7,4)、(7,10) 留空）
+     *   主斜方向 (4,4)..(9,9) — 6 连（长连，(3,3)、(10,10) 留空）
+     * (7,7) 同时属于两段。
+     *
+     * 旧版 board_check_winner 只看 max_run，会把 black_max=6 误判为 WHITE_WIN_NORMAL；
+     * 修复后必须按"存在某方向恰好 5 连"优先判 BLACK_WIN。
+     */
+    Board b; board_init(&b);
+    /* 水平 5 连 */
+    for (int c = 5; c <= 9; c++) b.cells[7][c] = BLACK;
+    /* 主斜 6 连 (4,4)..(9,9)，(7,7) 已是 BLACK 不会覆盖颜色 */
+    for (int k = 0; k < 6; k++) b.cells[4 + k][4 + k] = BLACK;
+    b.move_count = 10;  /* 不精确，board_check_winner 不依赖此值 */
+    ASSERT_EQ(board_check_winner(&b), RESULT_BLACK_WIN,
+              "winner: black 5(horiz) + 6(diag) simultaneous = BLACK_WIN (国规 9.2-c)");
+}
+
+static void test_winner_black_overline_diagonal_no_five(void) {
+    /* 黑斜方向 6 连但无任何 maximal 5 连段 → 长连禁手 → 白胜。
+     * 主斜 (4,4)..(9,9) 共 6 连，没有任何其他方向的黑子。
+     */
+    Board b; board_init(&b);
+    for (int k = 0; k < 6; k++) b.cells[4 + k][4 + k] = BLACK;
+    b.move_count = 6;
+    ASSERT_EQ(board_check_winner(&b), RESULT_WHITE_WIN_NORMAL,
+              "winner: black 6 (diagonal only, no 5-run) = WHITE_WIN (长连禁手)");
+}
+
 static void test_board_zobrist_round_trip(void) {
     /* place + undo 后 zobrist_hash 应回到 0 */
     Board b; board_init(&b);
@@ -193,6 +225,8 @@ int main(void) {
     test_winner_anti_diagonal();
     test_winner_vertical();
     test_winner_4_in_row_no_win();
+    test_winner_black_five_and_overline_priority();
+    test_winner_black_overline_diagonal_no_five();
     test_board_zobrist_round_trip();
     TEST_REPORT("test_board");
 }

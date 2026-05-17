@@ -46,10 +46,11 @@ bool board_place(Board *b, int row, int col, int color);
 bool board_undo(Board *b);
 
 /* 检查胜负。
- * 国规不对称：
- *   黑方 5 连 → RESULT_BLACK_WIN
- *   黑方 ≥6 连（长连）→ RESULT_WHITE_WIN_NORMAL（长连禁手判黑负）
+ * 国规不对称（Spec § 1.4 国规 9.1 + 9.2-c）：
  *   白方 ≥5 连 → RESULT_WHITE_WIN_NORMAL（白长连视同五连胜）
+ *   黑方 存在某方向恰好 5 连 → RESULT_BLACK_WIN
+ *       （即使另一方向同时形成长连，9.2-c：五连优先）
+ *   黑方 ≥6 连且无任何方向恰好 5 连 → RESULT_WHITE_WIN_NORMAL（长连禁手）
  *   全盘满 → RESULT_DRAW
  *   其他 → RESULT_NONE
  */
