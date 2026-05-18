@@ -44,9 +44,11 @@ const RenjuOpening *opening_get(int idx);
  */
 bool opening_matches(int b1r, int b1c, int w2r, int w2c, int b3r, int b3c, int *out_idx);
 
-/* 引擎执黑时的开局选择策略（极简版）。
- * 当前固定返回 0（花月之前的第一种：寒星）。
- * 未来可加：基于深度评估挑最优开局。
+/* 引擎执黑时的开局选择策略。
+ * 在 5 个广泛研究的珠形 (寒星/花月/疏星/长星/浦月) 中按内部计数器轮转，
+ * 每次调用返回不同 idx，使引擎对外不可预测，避免被对手单一开局针对。
+ * 同 process 内是确定性的 (静态计数器), 便于回归测试。
+ * 详见 src/opening.c 中实现注释。
  */
 int opening_choose_by_black_strategy(void);
 

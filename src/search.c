@@ -257,6 +257,11 @@ static int color_has_winning_setup(Board *b, int color) {
     return 0;
 }
 
+/* 测试专用 wrapper（仅薄包装；不改变 helper 语义）*/
+int search_color_has_winning_setup(Board *b, int color) {
+    return color_has_winning_setup(b, color);
+}
+
 /* TACTICAL_WIN_SCORE: leaf 检测到 side_to_move 有必胜 setup 时返回的分数。
  * 介于普通 pattern eval 上限（~2e7）和 mate threshold（SEARCH_INF - 1e4 = 9.999e7）之间。
  * 选 5e7 让"必胜 setup"明显压过常规威胁分但不被 IS_MATE_SCORE 当作 mate。

@@ -74,4 +74,10 @@ void search_reset(void);
 int search_find_n_distinct(Board *b, int depth, int n_want, Move *out, int *out_scores,
                            int time_budget_ms);
 
+/* 测试专用 wrapper：暴露 search.c 内部的 color_has_winning_setup helper。
+ * 给定 (b, color)：判断 color 是否有"1 步内造出必胜威胁"的着法（双四 / 四三 / 五连 / 活四）。
+ * 返回 1 = 有；0 = 无。仅用于单元测试 — 生产代码不应依赖此接口。
+ */
+int search_color_has_winning_setup(Board *b, int color);
+
 #endif /* SEARCH_H_ */

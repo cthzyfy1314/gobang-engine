@@ -15,7 +15,8 @@ const int PATTERN_SCORE[PAT_COUNT] = {
     100000,    /* PAT_FIVE */
     900,       /* PAT_BROKEN_FOUR — 比冲四稍弱，能成5的潜在威胁 */
     800,       /* PAT_JUMP_OPEN_THREE — 比活三稍弱，会变活四 */
-    9000       /* PAT_JUMP_OPEN_FOUR — 跟活四接近，填缝可直接成5 */
+    9000,      /* PAT_JUMP_OPEN_FOUR — 跟活四接近，填缝可直接成5 */
+    300        /* PAT_PROTO_THREE — 原活三：__XX_ / _XX__ / __XX__，一手成活三 */
 };
 
 void pattern_count_in_line(const int8_t *line, int len, int color, PatternStats *out) {
@@ -106,6 +107,49 @@ static void count_broken_in_line(const int8_t *line, int len, int color, Pattern
             out->counts[PAT_JUMP_OPEN_FOUR]++;
             out->counts[PAT_OPEN_THREE]--;
             continue;
+        }
+    }
+
+    /* Proto-open-three: 2-连 with both immediates open AND at least one side
+     * has 2+ consecutive empties beyond the immediate (i.e. can grow into
+     * _XXX_ in one move).
+     *
+     * 我们只在 exactly-2 的 XX-run 上 fire（不在 3-/4-/5-run 上 fire，否则
+     * 与 OPEN_THREE/SIMPLE_FOUR/OPEN_FOUR/FIVE 的计数语义会混乱）。
+     * Window patterns matched (per XX-run at positions p, p+1):
+     *   - line[p-1]==0 AND line[p+2]==0           (run has both immediates open)
+     *   - AND ( (p-2 >= 0 AND line[p-2]==0)  OR  (p+3 < len AND line[p+3]==0) )
+     *   - AND p-2 != X  AND p+3 != X (already implied if extension empty side)
+     *   - run is exactly 2 (line[p-2]!=X via we don't extend run; same for p+3)
+     *
+     * Dedup (option b): when proto-three fires, decrement the OPEN_TWO that
+     * pattern_count_in_line already counted for this same run (exactly 1).
+     *
+     * Concrete window patterns this matches (5/6-window views, '?' = any non-X):
+     *   _XX__   (5-window, no left extension OR left-blocked by X/edge)
+     *   __XX_   (5-window, no right extension)
+     *   __XX__  (6-window, both sides extendable — same proto-three counted once)
+     */
+    {
+        int p = 0;
+        while (p < len) {
+            if (line[p] != B) { p++; continue; }
+            int q = p;
+            while (q < len && line[q] == B) q++;
+            int rlen = q - p;
+            if (rlen == 2) {
+                int left_open  = (p - 1 >= 0)  && (line[p - 1] == 0);
+                int right_open = (q     < len) && (line[q]     == 0);
+                if (left_open && right_open) {
+                    int left_ext  = (p - 2 >= 0)  && (line[p - 2] == 0);
+                    int right_ext = (q + 1 < len) && (line[q + 1] == 0);
+                    if (left_ext || right_ext) {
+                        out->counts[PAT_PROTO_THREE]++;
+                        out->counts[PAT_OPEN_TWO]--;
+                    }
+                }
+            }
+            p = q;
         }
     }
     (void)op;  /* opponent color reserved for future use */

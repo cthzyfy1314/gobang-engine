@@ -344,6 +344,71 @@ static void test_true_double_three_still_forbidden(void) {
               "true_double_three: two truly open threes -> FORBID_DOUBLE_THREE");
 }
 
+/* ===== 中盘 forbid 场景 ===== */
+
+/* 中盘双三：周围有几个白棋子（不阻塞活三延伸），落黑形成双活三 → 仍 DOUBLE_THREE。
+ *   横向 (7,5)(7,6) 黑，外侧 col 3,4,8,9 都空（不影响）；
+ *   竖向 (5,7)(6,7) 黑，外侧 row 3,4,8,9 都空；
+ *   远处加一些 BW 棋子模拟中盘。
+ */
+static void test_midgame_double_three(void) {
+    Board b; board_init(&b);
+    /* 中盘环境：放一些远离 (7,7) 的非干扰棋子 */
+    put(&b, 1, 1, WHITE);
+    put(&b, 2, 13, BLACK);
+    put(&b, 13, 2, WHITE);
+    put(&b, 12, 12, BLACK);
+    put(&b, 10, 3, WHITE);
+    put(&b, 3, 10, BLACK);
+
+    /* 关键 setup（不被远处棋子影响）*/
+    put(&b, 7, 5, BLACK);
+    put(&b, 7, 6, BLACK);
+    put(&b, 5, 7, BLACK);
+    put(&b, 6, 7, BLACK);
+
+    ASSERT_EQ(forbid_check_black(&b, 7, 7), FORBID_DOUBLE_THREE,
+              "midgame: double_three with surrounding stones still triggers");
+}
+
+/* 中盘长连：连续 6 黑（同方向连续 6 子）→ FORBID_OVERLINE
+ *   构造 (7,2)(7,3)(7,4)(7,5)(7,7) 黑 + 落 (7,6) → (7,2)..(7,7) 6 连
+ *   长度 7 overline：(7,1)(7,2)(7,3)(7,4)(7,5)(7,7) 黑 + 落 (7,6) → (7,1)..(7,7) 7 连
+ */
+static void test_midgame_overline_seven(void) {
+    Board b; board_init(&b);
+    /* 中盘环境 */
+    put(&b, 10, 10, WHITE);
+    put(&b, 5, 10, WHITE);
+
+    /* 7 长连 setup */
+    put(&b, 7, 1, BLACK);
+    put(&b, 7, 2, BLACK);
+    put(&b, 7, 3, BLACK);
+    put(&b, 7, 4, BLACK);
+    put(&b, 7, 5, BLACK);
+    put(&b, 7, 7, BLACK);
+    /* 落 (7,6)：(7,1)..(7,7) = 7 连黑 → 长连禁手 */
+    ASSERT_EQ(forbid_check_black(&b, 7, 6), FORBID_OVERLINE,
+              "midgame: 7-in-a-row -> FORBID_OVERLINE");
+}
+
+/* 双三可用但黑落到别处（非 winning cell）→ 那个 cell 是 NONE。
+ *   双三 winning cell 是 (7,7)（参见 test_double_three 构造）。
+ *   黑若改落到远处的 (0,0)，该 cell 无威胁 → 非禁手。
+ *   注：仅验证"非 winning cell 也没 forbid"，不验证 winning cell 仍禁。
+ */
+static void test_midgame_double_three_available_but_play_elsewhere(void) {
+    Board b; board_init(&b);
+    put(&b, 7, 5, BLACK);
+    put(&b, 7, 6, BLACK);
+    put(&b, 5, 7, BLACK);
+    put(&b, 6, 7, BLACK);
+    /* (7,7) 是双三禁手点。但黑选择落到 (0,0)（远离任何 setup）→ 应 NONE */
+    ASSERT_EQ(forbid_check_black(&b, 0, 0), FORBID_NONE,
+              "midgame: black plays elsewhere (0,0) -> NONE despite (7,7) being forbidden");
+}
+
 int main(void) {
     test_overline_horizontal();
     test_five_only_no_forbid();
@@ -362,5 +427,8 @@ int main(void) {
     test_true_double_three_still_forbidden(); /* P1-2 正向：真双活三仍判禁 */
     test_edge_four_not_double();         /* P2-9: 贴边 four 边界 */
     test_open_four_mask_dedup_at_edge(); /* P2-9: mask 去重在边界 */
+    test_midgame_double_three();         /* 中盘双三 */
+    test_midgame_overline_seven();       /* 中盘 7 长连 */
+    test_midgame_double_three_available_but_play_elsewhere(); /* 双三可用但落别处 */
     TEST_REPORT("test_forbid");
 }

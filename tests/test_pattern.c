@@ -237,6 +237,68 @@ static void test_evaluate_score_table_values(void) {
     ASSERT_EQ(PATTERN_SCORE[PAT_SLEEP_THREE],    100, "score: SLEEP_THREE = 100");
     ASSERT_EQ(PATTERN_SCORE[PAT_SLEEP_TWO],       10, "score: SLEEP_TWO = 10");
     ASSERT_EQ(PATTERN_SCORE[PAT_NONE],             0, "score: NONE = 0");
+    ASSERT_EQ(PATTERN_SCORE[PAT_PROTO_THREE],    300, "score: PROTO_THREE = 300");
+}
+
+/* Proto-open-three: 2 consec with both immediates open AND at least one
+ * side extendable. Uses pattern_count_for_color so the run-scan + broken-scan
+ * dedup logic is exercised end-to-end.
+ */
+static void test_proto_three_both_sides_extendable(void) {
+    Board b; board_init(&b);
+    /* ___XX___ on row 7, cols 3,4. Both sides have lots of empties. */
+    b.cells[7][3] = 1; b.cells[7][4] = 1;
+    PatternStats s = {0};
+    pattern_count_for_color(&b, 1, &s);
+    ASSERT_EQ(s.counts[PAT_PROTO_THREE], 1, "proto3: ___XX___ -> PROTO_THREE x1");
+    /* Dedup: the basic OPEN_TWO should be decremented to 0 for this run. */
+    ASSERT_EQ(s.counts[PAT_OPEN_TWO], 0, "proto3: dedup OPEN_TWO -> 0");
+}
+
+static void test_proto_three_blocked_no_extension(void) {
+    Board b; board_init(&b);
+    /* _OXX_O on row 7, cols 0..5 — left immediate occupied by white, so not
+     * both-immediates-open => not a proto-three (and not an OPEN_TWO either).
+     */
+    b.cells[7][1] = 2; b.cells[7][2] = 1; b.cells[7][3] = 1; b.cells[7][5] = 2;
+    PatternStats s = {0};
+    pattern_count_for_color(&b, 1, &s);
+    ASSERT_EQ(s.counts[PAT_PROTO_THREE], 0, "proto3: _OXX_O -> 0");
+    ASSERT_EQ(s.counts[PAT_OPEN_TWO],    0, "proto3: _OXX_O -> OPEN_TWO 0");
+}
+
+static void test_proto_three_minimal_window(void) {
+    /* Direct line test: __XX__ should be exactly 1 proto-three.
+     * Use pattern_count_for_color on a small inset to avoid edge artefacts.
+     */
+    Board b; board_init(&b);
+    /* row 7 cols 4,5 = X. Cols 2,3,6,7 all empty. Beyond cols 1, 8 also empty. */
+    b.cells[7][4] = 1; b.cells[7][5] = 1;
+    PatternStats s = {0};
+    pattern_count_for_color(&b, 1, &s);
+    ASSERT_EQ(s.counts[PAT_PROTO_THREE], 1, "proto3: __XX__ -> PROTO_THREE x1");
+    ASSERT_EQ(s.counts[PAT_OPEN_TWO], 0, "proto3: __XX__ -> OPEN_TWO 0 (deduped)");
+}
+
+static void test_proto_three_one_side_only(void) {
+    /* _XX__ pattern with left immediate at edge.
+     * Use line: place XX at cols 0,1 (left edge) with col 2,3 empty, col 4 != color.
+     * Left immediate at col -1 is "boundary" = treated as non-color, so left
+     * is NOT open. So this is a SLEEP_TWO, not OPEN_TWO. Use cols 1,2 instead.
+     */
+    int8_t line[16]; PatternStats s = {0};
+    int n = build_line("_XX__", line);
+    pattern_count_in_line(line, n, 1, &s);
+    ASSERT_EQ(s.counts[PAT_OPEN_TWO], 1, "proto3 helper: _XX__ has OPEN_TWO x1 pre-dedup");
+    /* Direct exercise of count_broken via count_for_color requires a Board.
+     * Below: place black at col 7 and 8 on row 5, cols 5,6,9,10 empty.
+     * Layout horizontally: ..__XX__.. — both sides extendable.
+     */
+    Board b; board_init(&b);
+    b.cells[5][7] = 1; b.cells[5][8] = 1;
+    PatternStats s2 = {0};
+    pattern_count_for_color(&b, 1, &s2);
+    ASSERT_EQ(s2.counts[PAT_PROTO_THREE], 1, "proto3 helper: ..__XX__.. -> proto3 x1");
 }
 
 int main(void) {
@@ -267,5 +329,9 @@ int main(void) {
     test_evaluate_black_open_three_advantage();
     test_evaluate_open_four_dominates_open_three();
     test_evaluate_score_table_values();
+    test_proto_three_both_sides_extendable();
+    test_proto_three_blocked_no_extension();
+    test_proto_three_minimal_window();
+    test_proto_three_one_side_only();
     TEST_REPORT("test_pattern");
 }

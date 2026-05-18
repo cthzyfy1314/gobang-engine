@@ -243,14 +243,14 @@ static bool phase1_opening(Board *b, int my_color, int *out_N) {
     printf("\n=== Phase 1: Opening (national rule 4) ===\n");
     if (my_color == BLACK) {
         printf("You play BLACK. Decide opening: enter 3 coords (B1 W2 B3) and N.\n");
-        printf("  Format: <B1> <W2> <B3> <N>     e.g. H8 H9 I10 5    (= 花月, N=5)\n");
+        printf("  Format: <B1> <W2> <B3> <N>     e.g. H8 H9 I10 5    (= 溪月, N=5)\n");
         printf("  Rule:   (B1, W2, B3) must be one of the 26 national-rule openings.\n");
         printf("          B1 is always H8 (tengen).\n");
         printf("  Type 'list' to see all 26 openings.  Type 'auto' to let engine pick one.\n");
         printf("  Note:   N = number of black-5 candidates you'll offer in phase 4.\n");
     } else {
         printf("You play WHITE. Enter the opening BLACK reported (3 coords + N).\n");
-        printf("  Format: <B1> <W2> <B3> <N>     e.g. H8 H9 I10 5    (= 花月, N=5)\n");
+        printf("  Format: <B1> <W2> <B3> <N>     e.g. H8 H9 I10 5    (= 溪月, N=5)\n");
         printf("  Type 'list' to see all 26 openings.\n");
     }
 

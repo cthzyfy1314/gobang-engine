@@ -68,6 +68,16 @@ cl /W3 /TC /utf-8 /nologo /Fe:test_4_3_fix.exe /Fo:build\ ^
    src\board.c src\pattern.c src\search.c src\zobrist.c src\forbid.c tests\test_4_3_fix.c
 if errorlevel 1 ( echo [ERROR] test_4_3_fix build failed & exit /b 1 )
 
+echo Building test_threat_detect.exe...
+cl /W3 /TC /utf-8 /nologo /Fe:test_threat_detect.exe /Fo:build\ ^
+   src\board.c src\pattern.c src\search.c src\zobrist.c src\forbid.c tests\test_threat_detect.c
+if errorlevel 1 ( echo [ERROR] test_threat_detect build failed & exit /b 1 )
+
+echo Building test_search_n_strikes.exe...
+cl /W3 /TC /utf-8 /nologo /Fe:test_search_n_strikes.exe /Fo:build\ ^
+   src\board.c src\pattern.c src\search.c src\zobrist.c src\forbid.c tests\test_search_n_strikes.c
+if errorlevel 1 ( echo [ERROR] test_search_n_strikes build failed & exit /b 1 )
+
 echo.
 echo [OK] build complete.
 echo Run:
@@ -79,3 +89,5 @@ echo   test_zobrist.exe
 echo   test_forbid.exe
 echo   test_opening.exe
 echo   test_4_3_fix.exe
+echo   test_threat_detect.exe
+echo   test_search_n_strikes.exe
