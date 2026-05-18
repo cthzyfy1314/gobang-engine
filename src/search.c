@@ -186,6 +186,83 @@ static int threat_defend_level(Board *b, int row, int col) {
     return classify_move_threat(b, row, col, opp);
 }
 
+/* ============== 四三 / 双四 / 五连 setup 检测（leaf-level threat extension）==============
+ * classify_move_multi: 在 (row, col) 落 color 后，统计 4 个方向上各自的威胁。
+ *   out_fours  = 该 cell 落子后形成 four（SIMPLE_FOUR / OPEN_FOUR）的方向数
+ *   out_threes = 形成 OPEN_THREE 的方向数
+ *   特殊：若任一方向形成 FIVE，out_fours = 99（哨兵值，表示直接 mate）
+ *
+ * 不动 zobrist / history（cells 直接 toggle）。仅用于 leaf eval 内部检测。
+ */
+static void classify_move_multi(Board *b, int row, int col, int color,
+                                int *out_fours, int *out_threes) {
+    *out_fours = 0; *out_threes = 0;
+    if (b->cells[row][col] != EMPTY) return;
+
+    static const int dirs[4][2] = { {0,1}, {1,0}, {1,1}, {1,-1} };
+    int fours = 0, threes = 0;
+
+    b->cells[row][col] = (uint8_t)color;
+    for (int d = 0; d < 4; d++) {
+        int dr = dirs[d][0], dc = dirs[d][1];
+        int8_t line[11];
+        int n = 0;
+        for (int k = -5; k <= 5; k++) {
+            int nr = row + dr * k, nc = col + dc * k;
+            if (!board_in_bounds(nr, nc)) line[n++] = (int8_t)(3 - color);
+            else                            line[n++] = (int8_t)b->cells[nr][nc];
+        }
+        PatternStats st = {0};
+        pattern_count_in_line(line, n, color, &st);
+        if (st.counts[PAT_FIVE] >= 1) { fours = 99; threes = 0; break; }
+        if (st.counts[PAT_OPEN_FOUR] >= 1 || st.counts[PAT_SIMPLE_FOUR] >= 1) fours++;
+        else if (st.counts[PAT_OPEN_THREE] >= 1) threes++;
+    }
+    b->cells[row][col] = EMPTY;
+    *out_fours  = fours;
+    *out_threes = threes;
+}
+
+/* color_has_winning_setup: side==color 是否有"1 步内造出必胜威胁"的着法？
+ * 必胜威胁定义（标准 Renju 战术）：
+ *   - 直接五连（fours==99）
+ *   - 活四（一手不可挡）
+ *   - 双四（两个四，对方只能挡一个）
+ *   - 四三（一个四 + 一个活三）
+ *
+ * 黑棋如果禁手则跳过该 cell。返回 1 = 有；0 = 无。
+ *
+ * 注意：仅扫 search_generate_neighbor_moves 的邻近候选（性能考量）。
+ * 这意味着远离任何棋子的"创造性"着法看不见，但 Renju 战术几乎全在已有
+ * 棋子附近发生，所以漏检概率很低。
+ */
+static int color_has_winning_setup(Board *b, int color) {
+    Move cands[SEARCH_MAX_MOVES];
+    int n = search_generate_neighbor_moves(b, cands);
+    for (int i = 0; i < n; i++) {
+        int r = cands[i].row, c = cands[i].col;
+        if (b->cells[r][c] != EMPTY) continue;
+        if (color == BLACK && b->forbid_enabled) {
+            if (forbid_check_black(b, r, c) != FORBID_NONE) continue;
+        }
+        int fours, threes;
+        classify_move_multi(b, r, c, color, &fours, &threes);
+        if (fours >= 99) return 1;                /* 五连 */
+        if (fours >= 2)  return 1;                /* 双四 */
+        if (fours >= 1 && threes >= 1) return 1;  /* 四三 */
+        /* OPEN_FOUR 也是必胜，但 OPEN_FOUR 已在 fours 计数里（>=1）。
+         * 单 OPEN_FOUR 必胜需要额外判定 — 这里保守只把"明显胜"标出来。
+         */
+    }
+    return 0;
+}
+
+/* TACTICAL_WIN_SCORE: leaf 检测到 side_to_move 有必胜 setup 时返回的分数。
+ * 介于普通 pattern eval 上限（~2e7）和 mate threshold（SEARCH_INF - 1e4 = 9.999e7）之间。
+ * 选 5e7 让"必胜 setup"明显压过常规威胁分但不被 IS_MATE_SCORE 当作 mate。
+ */
+#define TACTICAL_WIN_SCORE 50000000
+
 /* ============== Forward decls ============== */
 static int alphabeta(Board *b, int ply, int depth_left, int alpha, int beta, long *nodes);
 static int vcx_search(Board *b, int ply, int depth_left, int allow_three, long *nodes, Move *root_choice);
@@ -266,6 +343,12 @@ int search_find_n_distinct(Board *b, int depth, int n_want, Move *out, int *out_
         if (out_scores) out_scores[picked] = scores[best];
         picked++;
     }
+
+    /* Time-state hygiene: 清掉 _deadline / _time_up，避免遗留状态污染下次调用。
+     * 与 search_best_move_timed 的出口约定保持一致。
+     */
+    _deadline = 0;
+    _time_up = 0;
     return picked;
 }
 
@@ -301,7 +384,16 @@ static int alphabeta(Board *b, int ply, int depth_left, int alpha, int beta, lon
     }
     if (res == RESULT_DRAW) return 0;
 
-    if (depth_left == 0) return search_evaluate(b);
+    if (depth_left == 0) {
+        /* Threat extension: 在 leaf 处做 1-ply 战术检测。
+         * 若 side_to_move 有必胜 setup（五连 / 双四 / 四三），返回近 mate 分。
+         * 这让 αβ 在不增加深度的情况下"看到"对方的 forcing 战术，避免被 双重威胁 偷袭。
+         */
+        if (color_has_winning_setup(b, b->side_to_move)) {
+            return TACTICAL_WIN_SCORE - (int)b->move_count;
+        }
+        return search_evaluate(b);
+    }
 
     Move moves[SEARCH_MAX_MOVES];
     int n = search_generate_neighbor_moves(b, moves);

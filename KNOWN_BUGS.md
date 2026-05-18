@@ -7,7 +7,17 @@ Each entry is reproducible — open the engine with the indicated config and rep
 
 ## #29 — 四三 (four-three) double-threat blindness
 
-**Status:** open. Architectural eval / move-ordering issue. Defer to Phase B.
+**Status:** PARTIALLY FIXED via leaf-level threat extension in
+`src/search.c` (`color_has_winning_setup` at depth_left == 0,
+returns `TACTICAL_WIN_SCORE`). Regression test in
+`tests/test_4_3_fix.c` confirms engine now picks **K9** (correct
+defensive cut) instead of K11 on the reproducer below. Score went
+from +1030 (old wrong choice) to +810 (new correct K9).
+
+Remaining gap: mid-search nodes (depth_left > 0) still use plain
+`pattern_evaluate`, which doesn't score "proto-open-three"
+(2 stones with both extensions free). Real fix is in pattern.c.
+For now the leaf extension catches the worst cases.
 
 **Reproducer:**
 
@@ -83,6 +93,59 @@ the engine's B11 choice is *not* `K11`. Acceptable defensive moves:
 `K9`, `L10`, `H6`, `J10` (each cuts at least one of white's emerging
 threats). If B11 still picks K11 the fix didn't help; if B11 picks
 something silly (e.g., a corner), the eval change broke something
-unrelated.
+unrelated. Automated test: `test_4_3_fix.exe`.
+
+---
+
+## #31 — Opening name → coordinate mapping not canonical RIF order
+
+**Status:** open. Identified by 国规 audit.
+
+`src/opening.c:47-82` assigns the 26 RIF opening names to coordinates
+by row-major scan order, not by RIF canonical numbering. Comment at
+`opening.c:21-24` acknowledges this. Geometry is correct (13 direct +
+13 indirect, all B3s within 5×5 of H8, all distinct). Names are not
+guaranteed to match the labels referees / opponents use.
+
+**Risk:** in competition the engine may print "金星" for a board
+position that the opponent calls "丘月" or vice versa. Same coords,
+different labels.
+
+**Fix:** cross-check against an authoritative RIF or 中国连珠协会
+opening chart. Reorder the `RenjuOpening` array entries to match. Add
+a `test_openings_canonical_names` referencing the standard table. No
+code changes beyond data — geometry stays.
+
+---
+
+## #32 — Engine always opens as 寒星 when playing BLACK
+
+**Status:** open.
+
+`opening_choose_by_black_strategy` (`src/opening.c:107`) returns 0
+unconditionally → engine always plays 寒星. A prepared opponent
+trivially prepares one anti-寒星 line and exploits it every game.
+
+**Fix candidates:**
+- Random pick from a curated subset (3-5 openings the engine plays well)
+- Pick based on engine self-play statistics (which opening gives best winrate)
+- Pick based on opponent profile (if known)
+
+Not load-bearing for校赛 if opponents are weak, but trivially fixable
+and worth doing before serious matches.
+
+---
+
+## #33 — Opening swap decision is shallow
+
+**Status:** open.
+
+`phase2_swap` in `src/ui.c:354-407` decides whether AI-as-WHITE swaps
+based on a single `pattern_evaluate < -300` threshold. No depth-search.
+Strong play would do a 4-6 ply search before deciding. Currently the
+AI may refuse advantageous swaps or accept disadvantageous ones.
+
+**Fix:** call `search_best_move_timed(b, 6, time_budget/3)` before the
+swap check; use that score instead of `pattern_evaluate`.
 
 ---

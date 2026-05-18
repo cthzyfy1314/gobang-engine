@@ -63,6 +63,11 @@ cl /W3 /TC /utf-8 /nologo /Fe:test_opening.exe /Fo:build\ ^
    src\board.c src\zobrist.c src\opening.c tests\test_opening.c
 if errorlevel 1 ( echo [ERROR] test_opening build failed & exit /b 1 )
 
+echo Building test_4_3_fix.exe...
+cl /W3 /TC /utf-8 /nologo /Fe:test_4_3_fix.exe /Fo:build\ ^
+   src\board.c src\pattern.c src\search.c src\zobrist.c src\forbid.c tests\test_4_3_fix.c
+if errorlevel 1 ( echo [ERROR] test_4_3_fix build failed & exit /b 1 )
+
 echo.
 echo [OK] build complete.
 echo Run:
@@ -73,3 +78,4 @@ echo   test_pattern.exe
 echo   test_zobrist.exe
 echo   test_forbid.exe
 echo   test_opening.exe
+echo   test_4_3_fix.exe

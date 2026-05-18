@@ -506,6 +506,17 @@ static bool phase5_one_turn(Board *b, int my_color, int search_depth, int time_b
             printf(">>> AI: no legal move. Resigning.\n"); return false;
         }
         char buf[8]; coord_to_str(r.best_move.row, r.best_move.col, buf);
+        /* Defense-in-depth: 搜索本应过滤禁手着，但万一搜索有 bug 漏出
+         * 一个禁手着，宁可在 UI 层 hard-fail 也不让引擎"无声地"违规落子。
+         */
+        if (active == BLACK && b->forbid_enabled) {
+            ForbidType ft = forbid_check_black(b, r.best_move.row, r.best_move.col);
+            if (ft != FORBID_NONE) {
+                printf("\n*** ENGINE BUG: AI tried to play forbid move %s at %s ***\n", label, buf);
+                printf("*** Forbid type = %d. Aborting game to avoid illegal state. ***\n", ft);
+                return false;
+            }
+        }
         printf(">>> AI plays %s = %s   (score=%d, nodes=%ld)\n", label, buf, r.score, r.nodes_searched);
         board_place(b, r.best_move.row, r.best_move.col, active);
         return true;
