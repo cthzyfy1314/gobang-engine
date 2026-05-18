@@ -351,18 +351,27 @@ static bool phase1_opening(Board *b, int my_color, int *out_N) {
  * 白方有权决定是否换边。
  * 返回：true 表示发生了交换，调用方需把 my_color 取反。
  */
-static bool phase2_swap(Board *b, int *my_color) {
+static bool phase2_swap(Board *b, int *my_color, int search_depth, int time_budget_ms) {
     char line[128];
     printf("\n=== Phase 2: 3rd-move swap (national rule 6) ===\n");
     printf("WHITE has the right to swap sides (one chance per game).\n");
 
     if (*my_color == WHITE) {
-        /* 我执白：引擎评估并建议 + 用户决定 */
-        printf("[Engine evaluating swap...]\n");
-        /* 简化评估：当前局面分（白视角）。> 0 说明白当前不亏，不应换；< 0 说明白亏，应换 */
+        /* 我执白：引擎深搜评估并建议 + 用户决定。
+         * 之前用 pattern_evaluate 静态评分，对 opening 局面噪声大。
+         * 现在用 αβ 搜索（depth ≤ 6, time ≤ 5s）算白方实际预期分。
+         */
+        printf("[Engine evaluating swap via depth search...]\n");
         b->zobrist_hash = zobrist_compute(b);
-        int score_as_white = pattern_evaluate(b);   /* 白视角 */
-        printf(">>> Engine score (current as WHITE): %d\n", score_as_white);
+        int swap_depth = (search_depth > 6) ? 6 : search_depth;
+        int swap_time = (time_budget_ms > 5000) ? 5000 : time_budget_ms;
+        SearchResult r = search_best_move_timed(b, swap_depth, swap_time);
+        int score_as_white = r.score;  /* search 返回 side_to_move 视角，这里 side_to_move = WHITE */
+        printf(">>> Engine search score (WHITE view, d=%d t=%dms): %d  (best reply %c%d, nodes=%ld)\n",
+               swap_depth, swap_time, score_as_white,
+               r.best_move.row >= 0 ? 'A' + r.best_move.col : '?',
+               r.best_move.row >= 0 ? BOARD_SIZE - r.best_move.row : 0,
+               r.nodes_searched);
         const char *advice = (score_as_white < -300) ? "**SWAP** (WHITE seems losing)" : "**KEEP WHITE** (no swap)";
         printf(">>> Engine advice: %s\n", advice);
         /* 严格 1/2 校验，错误输入循环重提 */
@@ -584,7 +593,7 @@ void ui_main_loop(int my_color, int search_depth, int time_budget_ms) {
     ui_draw_board(&b);
 
     /* 阶段 2：三手交换 */
-    if (!phase2_swap(&b, &my_color)) {
+    if (!phase2_swap(&b, &my_color, search_depth, time_budget_ms)) {
         /* phase2_swap 返回 false 不意味着退出，只意味着没换。检查 EOF/quit 已被它打印 */
     }
     ui_draw_board(&b);
