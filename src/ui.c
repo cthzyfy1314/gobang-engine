@@ -463,6 +463,19 @@ static bool phase4_n_strikes(Board *b, int my_color, int N, int search_depth, in
         }
         Move pick = cands[idx - 1];
         char buf[8]; coord_to_str(pick.row, pick.col, buf);
+        /* Defense-in-depth: search_find_n_distinct should filter forbid moves,
+         * but if a bug slipped one through, BLACK playing it is an immediate
+         * forfeit per 国规 9.x. Refuse to place and report. */
+        if (b->forbid_enabled) {
+            ForbidType ft = forbid_check_black(b, pick.row, pick.col);
+            if (ft != FORBID_NONE) {
+                fprintf(stderr, "[diag] phase-4 forbid-leak at %s: type=%d (search.find_n_distinct bug)\n",
+                        buf, ft);
+                printf("\n*** Game over: WHITE wins (BLACK B5 candidate %s is forbidden -- forfeit) ***\n", buf);
+                fflush(stdout);
+                return false;
+            }
+        }
         if (!board_place(b, pick.row, pick.col, BLACK)) { printf("B5 conflict.\n"); return false; }
         printf(">>> B5 = %s (chosen by opponent)\n", buf);
         return true;
@@ -497,8 +510,10 @@ static bool phase4_n_strikes(Board *b, int my_color, int N, int search_depth, in
          * time_budget/N 给每个候选独立预算, 同 phase2 swap 的处理思路。
          */
         int eval_depth = (search_depth > 4) ? 4 : search_depth;
+        /* Strict budget split: per_cand * got <= time_budget_ms.
+         * No floor — at very tight budget, search returns whatever it has
+         * (αβ ID layer 1 result minimum). Better than overrunning wall clock. */
         int per_cand_time = (time_budget_ms > 0) ? (time_budget_ms / got) : 0;
-        if (per_cand_time > 0 && per_cand_time < 100) per_cand_time = 100;  /* floor 100ms */
 
         printf("[Engine evaluating %d B5 candidates via search d=%d t=%dms each ...]\n",
                got, eval_depth, per_cand_time);
@@ -508,7 +523,11 @@ static bool phase4_n_strikes(Board *b, int my_color, int N, int search_depth, in
         int best_score_for_white = -SEARCH_INF;
         for (int i = 0; i < got; i++) {
             if (!board_place(b, cands[i].row, cands[i].col, BLACK)) continue;
-            b->zobrist_hash = zobrist_compute(b);  /* fresh hash, 避免 TT 污染 */
+            /* board_undo doesn't guarantee incremental zobrist restoration,
+             * so force-recompute before each per-candidate search. Without this,
+             * TT lookups would use stale hash. See board.c board_undo (verified
+             * 2026-05-19). */
+            b->zobrist_hash = zobrist_compute(b);
             SearchResult r = search_best_move_timed(b, eval_depth, per_cand_time);
             int s = r.score;  /* side_to_move == WHITE 所以是白视角 */
             char cbuf[8]; coord_to_str(cands[i].row, cands[i].col, cbuf);
