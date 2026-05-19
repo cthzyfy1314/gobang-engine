@@ -96,14 +96,44 @@ const RenjuOpening *opening_get(int idx) {
     return &RENJU_OPENINGS[idx];
 }
 
+/* Apply D4 transform `t` (0..7) to a coord centered at tengen (7,7).
+ *   t=0..3 = pure rotations (0°, 90° CCW, 180°, 270° CCW)
+ *   t=4..7 = mirror + rotations (mirror over col / antidiag / row / main diag)
+ * 公式以中心 (7,7) 为对称中心，2*7 - x = 14 - x。
+ */
+static void d4_transform(int t, int r, int c, int *out_r, int *out_c) {
+    switch (t) {
+        case 0: *out_r = r;      *out_c = c;      break;  /* identity */
+        case 1: *out_r = c;      *out_c = 14 - r; break;  /* rot 90° CCW */
+        case 2: *out_r = 14 - r; *out_c = 14 - c; break;  /* rot 180° */
+        case 3: *out_r = 14 - c; *out_c = r;      break;  /* rot 270° CCW */
+        case 4: *out_r = r;      *out_c = 14 - c; break;  /* mirror over col axis (vertical) */
+        case 5: *out_r = 14 - c; *out_c = 14 - r; break;  /* mirror over anti-diagonal */
+        case 6: *out_r = 14 - r; *out_c = c;      break;  /* mirror over row axis (horizontal) */
+        case 7: *out_r = c;      *out_c = r;      break;  /* mirror over main diagonal */
+        default: *out_r = r;     *out_c = c;      break;
+    }
+}
+
+/* 国规允许对手以任意旋转/镜像方向报珠形（棋盘 D4 对称）。
+ * 表里只存了每个等价类的一个 canonical 取向，故必须把输入用 8 个 D4
+ * 变换全跑一遍再去匹配。返回的 *out_idx 是 canonical (表内) 的 idx。
+ */
 bool opening_matches(int b1r, int b1c, int w2r, int w2c, int b3r, int b3c, int *out_idx) {
-    for (int i = 0; i < OPENING_COUNT; i++) {
-        const RenjuOpening *o = &RENJU_OPENINGS[i];
-        if (o->b1[0] == b1r && o->b1[1] == b1c &&
-            o->w2[0] == w2r && o->w2[1] == w2c &&
-            o->b3[0] == b3r && o->b3[1] == b3c) {
-            if (out_idx) *out_idx = i;
-            return true;
+    for (int t = 0; t < 8; t++) {
+        int tb1r, tb1c, tw2r, tw2c, tb3r, tb3c;
+        d4_transform(t, b1r, b1c, &tb1r, &tb1c);
+        d4_transform(t, w2r, w2c, &tw2r, &tw2c);
+        d4_transform(t, b3r, b3c, &tb3r, &tb3c);
+        /* B1 必须落在天元 (7,7)；任何 26 开局表里 B1 都恒为 H8。 */
+        if (tb1r != 7 || tb1c != 7) continue;
+        for (int i = 0; i < OPENING_COUNT; i++) {
+            const RenjuOpening *o = &RENJU_OPENINGS[i];
+            if (o->w2[0] == tw2r && o->w2[1] == tw2c &&
+                o->b3[0] == tb3r && o->b3[1] == tb3c) {
+                if (out_idx) *out_idx = i;
+                return true;
+            }
         }
     }
     if (out_idx) *out_idx = -1;
