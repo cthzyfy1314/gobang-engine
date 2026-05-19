@@ -11,6 +11,7 @@
  *   7. 邻近候选扩展：2 圈方块 + 4 个方向各延伸 4 cell
  */
 #define _CRT_SECURE_NO_WARNINGS
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <limits.h>
@@ -374,19 +375,68 @@ int search_find_n_distinct(Board *b, int depth, int n_want, Move *out, int *out_
         }
     }
 
+    /* Fix 2 / 国规 rule 7（五手 N 打）: 选出的 N 个候选必须"足够分散"，
+     * 不能 5 个都堆在同一条线/同一战术 motif 上。约束：每个新加入的候选
+     * 与已选候选的 Chebyshev distance（max(|dr|, |dc|)）必须 >= 2。
+     *
+     * 算法：
+     *   1. 已按分数降序排序索引（下面的 sort_idx）。
+     *   2. 遍历，若满足距离约束则收下；否则跳过。
+     *   3. 若 first pass 数量不足 n_want，再做 fallback pass 放宽距离约束，
+     *      取剩余最高分补足，并向 stderr 发警告。
+     */
     int picked = 0;
     int used[SEARCH_MAX_MOVES] = {0};
-    while (picked < n_want && picked < valid_n) {
-        int best = -1;
-        for (int i = 0; i < valid_n; i++) {
-            if (used[i]) continue;
-            if (best == -1 || scores[i] > scores[best]) best = i;
+
+    /* 按分数降序得到排序索引 sort_idx[0..valid_n-1] */
+    int sort_idx[SEARCH_MAX_MOVES];
+    for (int i = 0; i < valid_n; i++) sort_idx[i] = i;
+    for (int i = 0; i < valid_n - 1; i++) {
+        int best = i;
+        for (int j = i + 1; j < valid_n; j++) {
+            if (scores[sort_idx[j]] > scores[sort_idx[best]]) best = j;
         }
-        if (best == -1) break;
-        used[best] = 1;
-        out[picked] = moves[valid_idx[best]];
-        if (out_scores) out_scores[picked] = scores[best];
+        if (best != i) {
+            int t = sort_idx[i]; sort_idx[i] = sort_idx[best]; sort_idx[best] = t;
+        }
+    }
+
+    /* Pass A: 强 distinctness（Chebyshev >= 2） */
+    int picked_r[SEARCH_MAX_MOVES], picked_c[SEARCH_MAX_MOVES];
+    for (int k = 0; k < valid_n && picked < n_want; k++) {
+        int idx = sort_idx[k];
+        int mr = moves[valid_idx[idx]].row;
+        int mc = moves[valid_idx[idx]].col;
+        int ok = 1;
+        for (int p = 0; p < picked; p++) {
+            int dr = mr - picked_r[p]; if (dr < 0) dr = -dr;
+            int dc = mc - picked_c[p]; if (dc < 0) dc = -dc;
+            int cheb = dr > dc ? dr : dc;
+            if (cheb < 2) { ok = 0; break; }
+        }
+        if (!ok) continue;
+        used[idx] = 1;
+        out[picked] = moves[valid_idx[idx]];
+        if (out_scores) out_scores[picked] = scores[idx];
+        picked_r[picked] = mr;
+        picked_c[picked] = mc;
         picked++;
+    }
+
+    /* Pass B (fallback): 不足 n_want 时放宽约束，按分数补足。 */
+    if (picked < n_want && picked < valid_n) {
+        fprintf(stderr, "[search_find_n_distinct] WARNING: only %d candidates pass "
+                        "Chebyshev>=2 distinctness (国规 rule 7); falling back to "
+                        "score-only for remaining %d slot(s).\n",
+                        picked, n_want - picked);
+        for (int k = 0; k < valid_n && picked < n_want; k++) {
+            int idx = sort_idx[k];
+            if (used[idx]) continue;
+            used[idx] = 1;
+            out[picked] = moves[valid_idx[idx]];
+            if (out_scores) out_scores[picked] = scores[idx];
+            picked++;
+        }
     }
 
     /* Time-state hygiene: 清掉 _deadline / _time_up，避免遗留状态污染下次调用。
@@ -422,21 +472,34 @@ static int alphabeta(Board *b, int ply, int depth_left, int alpha, int beta,
 
     if (ply >= SEARCH_MAX_PLY) return search_evaluate(b);
 
-    /* TT 查询 */
+    /* TT 查询
+     * Fix 5: 在 PV node 上，仅接受 TT_FLAG_EXACT 切断；UPPER/LOWER bound 不切断。
+     * 否则 aspiration window 窄化时，非精确 bound 会污染 PV 报告。
+     * 非 PV node（scout / null-window）则保留原 fail-high/low 切断行为。
+     */
     const TTEntry *e = tt_get(b->zobrist_hash);
     if (e != NULL && e->depth >= depth_left) {
         if (e->flag == TT_FLAG_EXACT) return e->score;
-        if (e->flag == TT_FLAG_LOWER && e->score >= beta)  return e->score;
-        if (e->flag == TT_FLAG_UPPER && e->score <= alpha) return e->score;
+        if (!is_pv_node) {
+            if (e->flag == TT_FLAG_LOWER && e->score >= beta)  return e->score;
+            if (e->flag == TT_FLAG_UPPER && e->score <= alpha) return e->score;
+        }
+        /* PV node + 非 EXACT bound: 不切断，落到下面正常 search */
     }
 
-    /* 终局检查 */
+    /* 终局检查
+     * Fix 3: mate score 用 ply（root-relative）而非 b->move_count（绝对手数）。
+     * 这样 engine 偏好"步数更短"的 mate（SEARCH_INF - ply 越小越远）。
+     * TODO: TT 中 mate score 的 store/load 应做 ply 归一化
+     *   (store: score += ply; load: score -= ply)，当前未做 — 短期内可能造成
+     *   跨节点 mate-distance 略有失真，但不影响 mate 正负判定。
+     */
     GameResult res = board_check_winner(b);
     if (res == RESULT_BLACK_WIN) {
-        return (b->side_to_move == BLACK) ? SEARCH_INF - b->move_count : -(SEARCH_INF - b->move_count);
+        return (b->side_to_move == BLACK) ? SEARCH_INF - ply : -(SEARCH_INF - ply);
     }
     if (res == RESULT_WHITE_WIN_NORMAL || res == RESULT_WHITE_WIN_BY_BLACK_FORBID) {
-        return (b->side_to_move == WHITE) ? SEARCH_INF - b->move_count : -(SEARCH_INF - b->move_count);
+        return (b->side_to_move == WHITE) ? SEARCH_INF - ply : -(SEARCH_INF - ply);
     }
     if (res == RESULT_DRAW) return 0;
 
@@ -446,7 +509,7 @@ static int alphabeta(Board *b, int ply, int depth_left, int alpha, int beta,
          * 这让 αβ 在不增加深度的情况下"看到"对方的 forcing 战术，避免被 双重威胁 偷袭。
          */
         if (color_has_winning_setup(b, b->side_to_move)) {
-            return TACTICAL_WIN_SCORE - (int)b->move_count;
+            return TACTICAL_WIN_SCORE - ply;
         }
         return search_evaluate(b);
     }
@@ -577,12 +640,17 @@ static int alphabeta(Board *b, int ply, int depth_left, int alpha, int beta,
         }
     }
 
-    /* TT 写入 */
-    TTFlag flag;
-    if (best_score <= orig_alpha)      flag = TT_FLAG_UPPER;
-    else if (best_score >= beta)       flag = TT_FLAG_LOWER;
-    else                                flag = TT_FLAG_EXACT;
-    tt_put(b->zobrist_hash, depth_left, best_score, flag, best_r, best_c);
+    /* TT 写入
+     * Fix 4: 时间到时，best_score 可能是不完整/被污染的 fake 分数；
+     * 不能用真实 depth_left 持久化到 TT，否则下次搜索会复用毒数据。
+     */
+    if (!_time_up) {
+        TTFlag flag;
+        if (best_score <= orig_alpha)      flag = TT_FLAG_UPPER;
+        else if (best_score >= beta)       flag = TT_FLAG_LOWER;
+        else                                flag = TT_FLAG_EXACT;
+        tt_put(b->zobrist_hash, depth_left, best_score, flag, best_r, best_c);
+    }
 
     return best_score;
 }
@@ -608,12 +676,12 @@ static int vcx_search(Board *b, int ply, int depth_left, int allow_three, long *
 
     if (ply >= SEARCH_MAX_PLY) return 0;
 
-    /* 终局检查 */
+    /* 终局检查（Fix 3: mate score 用 ply 而非 b->move_count） */
     GameResult res = board_check_winner(b);
     if (res == RESULT_BLACK_WIN)
-        return (b->side_to_move == BLACK) ? SEARCH_INF - b->move_count : -(SEARCH_INF - b->move_count);
+        return (b->side_to_move == BLACK) ? SEARCH_INF - ply : -(SEARCH_INF - ply);
     if (res == RESULT_WHITE_WIN_NORMAL || res == RESULT_WHITE_WIN_BY_BLACK_FORBID)
-        return (b->side_to_move == WHITE) ? SEARCH_INF - b->move_count : -(SEARCH_INF - b->move_count);
+        return (b->side_to_move == WHITE) ? SEARCH_INF - ply : -(SEARCH_INF - ply);
     if (res == RESULT_DRAW) return 0;
 
     if (depth_left <= 0) return 0;
@@ -651,7 +719,7 @@ static int vcx_search(Board *b, int ply, int depth_left, int allow_three, long *
                            (color == WHITE && tmp_res == RESULT_WHITE_WIN_NORMAL));
             if (is_five) {
                 if (root_choice) { *root_choice = all_moves[i]; }
-                return SEARCH_INF - b->move_count - 1;  /* 当前方必胜 */
+                return SEARCH_INF - ply - 1;  /* Fix 3: 当前方必胜（距 root ply+1 步） */
             }
             forcing[n_forcing++] = all_moves[i];   /* 四级威胁先收下 */
         } else if (allow_three && tc >= 2) {
@@ -666,6 +734,12 @@ static int vcx_search(Board *b, int ply, int depth_left, int allow_three, long *
     for (int i = 0; i < n_moves; i++) {
         int r = all_moves[i].row, c = all_moves[i].col;
         if (b->cells[r][c] != EMPTY) continue;
+        /* Fix 1: 若 opp 是 BLACK 且这一点是禁手（长连/双四/双三），
+         * opp 合法不能在此落子 — 这不是真实 FIVE 威胁，跳过。
+         * 否则会把禁手点误判为本方必败导致假阳性。
+         */
+        if (opp == BLACK && b->forbid_enabled &&
+            forbid_check_black(b, r, c) != FORBID_NONE) continue;
         b->cells[r][c] = (uint8_t)opp;
         GameResult tmp_res = board_check_winner(b);
         b->cells[r][c] = EMPTY;
@@ -675,8 +749,8 @@ static int vcx_search(Board *b, int ply, int depth_left, int allow_three, long *
                                           tmp_res == RESULT_WHITE_WIN_BY_BLACK_FORBID)));
         if (is_five) {
             if (opp_five_r >= 0) {
-                /* 对方有双重 FIVE 威胁，本方挡不掉 */
-                return -(SEARCH_INF - b->move_count);
+                /* 对方有双重 FIVE 威胁，本方挡不掉 (Fix 3: ply 而非 move_count) */
+                return -(SEARCH_INF - ply);
             }
             opp_five_r = r; opp_five_c = c;
         }
@@ -687,8 +761,8 @@ static int vcx_search(Board *b, int ply, int depth_left, int allow_three, long *
         int r = opp_five_r, c = opp_five_c;
         if (color == BLACK && b->forbid_enabled &&
             forbid_check_black(b, r, c) != FORBID_NONE) {
-            /* 挡的点是黑禁手 → 必负 */
-            return -(SEARCH_INF - b->move_count);
+            /* 挡的点是黑禁手 → 必负 (Fix 3: ply 而非 move_count) */
+            return -(SEARCH_INF - ply);
         }
         if (!board_place(b, r, c, color)) return 0;
         int score = -vcx_search(b, ply + 1, depth_left - 1, allow_three, nodes, NULL);
@@ -791,7 +865,10 @@ SearchResult search_best_move_timed(Board *b, int max_depth, int time_budget_ms)
             int vcf_found = search_vcf(b, 20, &vcf_choice, &result.nodes_searched);
             if (vcf_found) {
                 result.best_move = vcf_choice;
-                result.score = SEARCH_INF - b->move_count - 1;
+                /* Fix 3: VCF root mate = SEARCH_INF - 1 (one ply from root).
+                 * 与 alphabeta / vcx_search 内部的 ply-based mate scoring 保持一致。
+                 */
+                result.score = SEARCH_INF - 1;
                 return result;
             }
         }
