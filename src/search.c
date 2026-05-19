@@ -269,7 +269,8 @@ int search_color_has_winning_setup(Board *b, int color) {
 #define TACTICAL_WIN_SCORE 50000000
 
 /* ============== Forward decls ============== */
-static int alphabeta(Board *b, int ply, int depth_left, int alpha, int beta, long *nodes);
+static int alphabeta(Board *b, int ply, int depth_left, int alpha, int beta,
+                     int is_pv_node, long *nodes);
 static int vcx_search(Board *b, int ply, int depth_left, int allow_three, long *nodes, Move *root_choice);
 
 /* ============== search_find_n_distinct ============== */
@@ -324,7 +325,7 @@ int search_find_n_distinct(Board *b, int depth, int n_want, Move *out, int *out_
             if (check_time()) { complete = 0; break; }
             int i = valid_idx[j];
             if (!board_place(b, moves[i].row, moves[i].col, color)) { complete = 0; break; }
-            int s = -alphabeta(b, 1, d - 1, -beta, -alpha, &nodes_dummy);
+            int s = -alphabeta(b, 1, d - 1, -beta, -alpha, 1, &nodes_dummy);
             board_undo(b);
             if (_time_up) { complete = 0; break; }
             tmp_scores[j] = s;
@@ -362,7 +363,18 @@ int search_evaluate(const Board *b) {
 }
 
 /* ============== alphabeta main ============== */
-static int alphabeta(Board *b, int ply, int depth_left, int alpha, int beta, long *nodes) {
+/* alphabeta — negamax with αβ pruning + TT + killer/history + tactical move ordering.
+ *
+ * PVS (Principal Variation Search): first move from current node uses full window
+ * (-beta, -alpha) and inherits is_pv_node. Subsequent moves first try null-window
+ * scout (-alpha-1, -alpha) with is_pv_node=0; only re-search with full window +
+ * is_pv_node=1 if the scout score lands in (alpha, beta).
+ *
+ * Root caller passes is_pv_node=1. Recursive calls only the FIRST move stays PV;
+ * all others are forced non-PV scouts.
+ */
+static int alphabeta(Board *b, int ply, int depth_left, int alpha, int beta,
+                     int is_pv_node, long *nodes) {
     (*nodes)++;
 
     /* 时间检查（每 1024 节点一次，避免 clock() 过于频繁） */
@@ -468,11 +480,25 @@ static int alphabeta(Board *b, int ply, int depth_left, int alpha, int beta, lon
     int best_score = -SEARCH_INF;
     int best_r = -1, best_c = -1;
 
+    int searched = 0;  /* number of moves actually searched (post board_place success) */
     for (int i = 0; i < legal_n; i++) {
         int r = legal[i].row, c = legal[i].col;
         if (!board_place(b, r, c, color)) continue;
-        int score = -alphabeta(b, ply + 1, depth_left - 1, -beta, -alpha, nodes);
+
+        int score;
+        if (searched == 0) {
+            /* First move: full window, inherit PV status */
+            score = -alphabeta(b, ply + 1, depth_left - 1, -beta, -alpha, is_pv_node, nodes);
+        } else {
+            /* Subsequent moves: null-window scout, forced non-PV */
+            score = -alphabeta(b, ply + 1, depth_left - 1, -alpha - 1, -alpha, 0, nodes);
+            /* fail-high in [alpha+1, beta) AND we are PV node → full-window re-search */
+            if (score > alpha && score < beta && is_pv_node) {
+                score = -alphabeta(b, ply + 1, depth_left - 1, -beta, -alpha, 1, nodes);
+            }
+        }
         board_undo(b);
+        searched++;
 
         if (_time_up) return best_score > -SEARCH_INF ? best_score : search_evaluate(b);
 
@@ -763,7 +789,12 @@ SearchResult search_best_move_timed(Board *b, int max_depth, int time_budget_ms)
                 }
                 if (!board_place(b, moves[i].row, moves[i].col, color)) continue;
                 legal_seen++;
-                int score = -alphabeta(b, 1, d - 1, -beta, -local_alpha, &cur.nodes_searched);
+                /* Root is itself a PV node — pass is_pv=1 to first call.
+                 * PVS at root level (scout siblings) intentionally not added here for
+                 * commit-1 simplicity; aspiration window re-search interaction would
+                 * compound complexity. PVS still kicks in at depth 1+ inside alphabeta.
+                 */
+                int score = -alphabeta(b, 1, d - 1, -beta, -local_alpha, 1, &cur.nodes_searched);
                 board_undo(b);
 
                 if (_time_up) break;
