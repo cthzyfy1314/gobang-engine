@@ -99,53 +99,110 @@ unrelated. Automated test: `test_4_3_fix.exe`.
 
 ## #31 — Opening name → coordinate mapping not canonical RIF order
 
-**Status:** open. Identified by 国规 audit.
+**Status:** CLOSED (2026-05-19, no actual mismatch found).
 
-`src/opening.c:47-82` assigns the 26 RIF opening names to coordinates
-by row-major scan order, not by RIF canonical numbering. Comment at
-`opening.c:21-24` acknowledges this. Geometry is correct (13 direct +
-13 indirect, all B3s within 5×5 of H8, all distinct). Names are not
-guaranteed to match the labels referees / opponents use.
-
-**Risk:** in competition the engine may print "金星" for a board
-position that the opponent calls "丘月" or vice versa. Same coords,
-different labels.
-
-**Fix:** cross-check against an authoritative RIF or 中国连珠协会
-opening chart. Reorder the `RenjuOpening` array entries to match. Add
-a `test_openings_canonical_names` referencing the standard table. No
-code changes beyond data — geometry stays.
+国规 compliance audit (2026-05-19) hand-verified all 26 (idx, RIF code,
+Chinese/Japanese name, B3 coord) tuples in `src/opening.c:52-88` against
+RIF canonical. Idx ordering is by row-major scan, but every entry carries
+its correct RIF code + name in the comments. No actual name↔coord
+mismatch exists. Risk in original issue was hypothetical only.
 
 ---
 
 ## #32 — Engine always opens as 寒星 when playing BLACK
 
-**Status:** open.
+**Status:** FIXED (`src/opening.c:113-133`).
 
-`opening_choose_by_black_strategy` (`src/opening.c:107`) returns 0
-unconditionally → engine always plays 寒星. A prepared opponent
-trivially prepares one anti-寒星 line and exploits it every game.
-
-**Fix candidates:**
-- Random pick from a curated subset (3-5 openings the engine plays well)
-- Pick based on engine self-play statistics (which opening gives best winrate)
-- Pick based on opponent profile (if known)
-
-Not load-bearing for校赛 if opponents are weak, but trivially fixable
-and worth doing before serious matches.
+`opening_choose_by_black_strategy` now rotates through a curated pool
+of 5 openings (寒星 / 花月 / 疏星 / 长星 / 浦月) using a static
+call counter. Avoids the always-寒星 footgun while staying
+deterministic (test-friendly).
 
 ---
 
 ## #33 — Opening swap decision is shallow
 
-**Status:** open.
+**Status:** FIXED (2026-05-19, commit-pending).
 
-`phase2_swap` in `src/ui.c:354-407` decides whether AI-as-WHITE swaps
-based on a single `pattern_evaluate < -300` threshold. No depth-search.
-Strong play would do a 4-6 ply search before deciding. Currently the
-AI may refuse advantageous swaps or accept disadvantageous ones.
+Part 1 (originally identified): static `pattern_evaluate` → already
+upgraded to αβ search at `ui.c:368`.
 
-**Fix:** call `search_best_move_timed(b, 6, time_budget/3)` before the
-swap check; use that score instead of `pattern_evaluate`.
+Part 2 (newly identified by 100-game vs-Mintaka data showing WHITE 41%
+vs BLACK 49%): threshold tightened from `-300` to `-50` (`ui.c:381`).
+
+Rationale: at search depth 4-6 the returned score already incorporates
+each opening's intrinsic balance — the 26 国规 openings are designed
+to be roughly balanced (|equilibrium| typically < 100). Old `-300`
+threshold only triggered swap in disastrous-loss positions; new `-50`
+triggers swap whenever WHITE is meaningfully worse than BLACK (with
+50-point noise margin to avoid jitter).
+
+If future data shows per-opening calibration is needed (e.g.,
+Kagetsu/Hogetsu intrinsically BLACK-favored by >50), upgrade to a
+per-opening threshold table indexed by `opening_idx`.
+
+---
+
+## #34 — Phase 4 AI=WHITE picks B5 with static pattern eval
+
+**Status:** FIXED (2026-05-19, commit-pending).
+
+`ui.c:482-516` now runs `search_best_move_timed(b, min(depth,4),
+time_budget/N)` per candidate after `board_place(BLACK)`, picks the
+candidate giving best score from WHITE's view. Time floor of 100ms
+per candidate. Per-candidate score printed for diagnostic visibility.
+
+Mirrors phase 2 swap's αβ approach. Total phase 4 latency now bounded
+by user's `--time` budget (each candidate gets ~budget/N).
+
+Motivation data: vs Mintaka 100 games (seed=42 + seed=99 combined),
+WHITE side won 16/39 (41%) vs BLACK side 30/61 (49%). The 8 ppt gap
+points to WHITE-only weaknesses — this + #33 are the candidates.
+
+---
+
+## #35 — N-strike candidates restricted to neighbor moves
+
+**Status:** open. Identified by 国规 audit (2026-05-19).
+
+`search_find_n_distinct` (`search.c:316-398`) only considers moves from
+`search_generate_neighbor_moves` (2-ring + 4-direction extension).
+Far-board candidates are silently excluded. National rule 7 doesn't
+require BLACK's N candidates to be adjacent to existing stones — a
+strong opening play with a far-board strike is legal but our engine
+will never propose it.
+
+**Risk:** strategic ceiling cap, low (no校赛 weak opponent will exploit).
+Only relevant if facing tactically aware opponents who recognize
+distant candidates as legitimate.
+
+**Fix:** widen `search_generate_neighbor_moves` to include all empty
+cells with `legal_n < N` fallback, or add a separate "phase-4-only"
+move generator.
+
+---
+
+## #36 — True open-three recursion: geometric-only, no legality check
+
+**Status:** open. Identified by 国规 audit (2026-05-19).
+
+`is_true_open_three_through_center` (`src/forbid.c:89-148`) verifies
+that the candidate three could form a geometric `_XXXX_` via any
+EMPTY extension cell. National rule defines a "true open three" as
+one whose completing-to-four move is itself a *legal* move (not a
+forbid).
+
+Current impl is over-strict: it counts geometric three-patterns where
+the four-completion is actually a禁手 (e.g., would form double-four)
+as "true open threes" anyway. This causes AI to over-detect
+double-three forbids and refuse some moves that国规 actually allows.
+
+**Direction:** add second-layer legality verification — for each
+candidate four-completion cell, recursively check it's not itself a
+禁手. Beware infinite recursion (cap depth or use cycle detection).
+
+**Compliance impact:** none — over-strict means AI refuses legal moves,
+not the reverse. Strength impact: ~20-50 ELO loss in tight tactical
+positions where the AI declines a strong move.
 
 ---
