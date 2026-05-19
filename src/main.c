@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <errno.h>
 #ifdef _WIN32
 #include <windows.h>
 #endif
@@ -76,22 +77,39 @@ int main(int argc, char **argv) {
         if      (!strcmp(argv[i], "--white"))         my_color = WHITE;
         else if (!strcmp(argv[i], "--black"))         my_color = BLACK;
         else if (!strncmp(argv[i], "--depth=", 8)) {
-            depth = atoi(argv[i] + 8);
-            if (depth < 1)  depth = 1;
-            if (depth > 20) depth = 20;
+            const char *s = argv[i] + 8;
+            char *end;
+            errno = 0;
+            long v = strtol(s, &end, 10);
+            if (errno != 0 || end == s || *end != '\0' || v < 1 || v > 20) {
+                printf("Bad --depth value: '%s' (expected integer in [1, 20])\n", s);
+                return 1;
+            }
+            depth = (int)v;
         }
         else if (!strncmp(argv[i], "--time=", 7)) {
-            _g_time_budget_ms = atoi(argv[i] + 7);
-            if (_g_time_budget_ms < 0) _g_time_budget_ms = 0;
+            const char *s = argv[i] + 7;
+            char *end;
+            errno = 0;
+            long v = strtol(s, &end, 10);
+            if (errno != 0 || end == s || *end != '\0' || v < 0 || v > 600000) {
+                printf("Bad --time value: '%s' (expected integer in [0, 600000] ms; 0 = unlimited)\n", s);
+                return 1;
+            }
+            _g_time_budget_ms = (int)v;
         }
         else if (!strncmp(argv[i], "--auto-w4=", 10)) {
             /* Parse coord like "I8" or "G7". Letter A-O = col 0-14, number 1-15 = row 15-1. */
             const char *s = argv[i] + 10;
             char letter = (char)toupper((unsigned char)s[0]);
             int num = 0;
-            if (letter < 'A' || letter > 'O' || sscanf(s + 1, "%d", &num) != 1 ||
+            char trailing = 0;
+            int parsed = sscanf(s + 1, "%d%c", &num, &trailing);
+            if (letter < 'A' || letter > 'O' ||
+                parsed < 1 ||  /* no number */
+                parsed > 1 ||  /* trailing garbage */
                 num < 1 || num > BOARD_SIZE) {
-                printf("Bad --auto-w4 coord: %s (expected like 'I8' or 'G7')\n", s);
+                printf("Bad --auto-w4 coord: '%s' (expected like 'I8' or 'G7', no trailing chars)\n", s);
                 return 1;
             }
             auto_w4_col = letter - 'A';
