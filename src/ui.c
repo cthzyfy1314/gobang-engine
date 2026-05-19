@@ -511,9 +511,12 @@ static bool phase4_n_strikes(Board *b, int my_color, int N, int search_depth, in
          */
         int eval_depth = (search_depth > 4) ? 4 : search_depth;
         /* Strict budget split: per_cand * got <= time_budget_ms.
-         * No floor — at very tight budget, search returns whatever it has
-         * (αβ ID layer 1 result minimum). Better than overrunning wall clock. */
+         * Min-clamp to 1 to avoid silent unlimited-time fallback: budget=0
+         * means "unlimited" in search_best_move_timed; at tight budgets where
+         * time_budget_ms/got rounds down to 0 we'd accidentally activate that
+         * path and run forever. Clamping to 1 keeps strict budget intent. */
         int per_cand_time = (time_budget_ms > 0) ? (time_budget_ms / got) : 0;
+        if (time_budget_ms > 0 && per_cand_time == 0) per_cand_time = 1;
 
         printf("[Engine evaluating %d B5 candidates via search d=%d t=%dms each ...]\n",
                got, eval_depth, per_cand_time);
@@ -523,10 +526,13 @@ static bool phase4_n_strikes(Board *b, int my_color, int N, int search_depth, in
         int best_score_for_white = -SEARCH_INF;
         for (int i = 0; i < got; i++) {
             if (!board_place(b, cands[i].row, cands[i].col, BLACK)) continue;
-            /* board_undo doesn't guarantee incremental zobrist restoration,
-             * so force-recompute before each per-candidate search. Without this,
-             * TT lookups would use stale hash. See board.c board_undo (verified
-             * 2026-05-19). */
+            /* Defensive hash recompute. board_undo DOES maintain incremental
+             * zobrist via XOR self-inverse (board.c:53-55), so the round-trip
+             * place+undo restores hash exactly — this recompute is redundant
+             * for correctness. Kept for defense-in-depth: cost is one full
+             * board scan per candidate (~225 ops), search itself is much more,
+             * and protects against any future board mutation that forgets
+             * incremental hash update. Per re-audit 2026-05-19. */
             b->zobrist_hash = zobrist_compute(b);
             SearchResult r = search_best_move_timed(b, eval_depth, per_cand_time);
             int s = r.score;  /* side_to_move == WHITE 所以是白视角 */
@@ -540,6 +546,21 @@ static bool phase4_n_strikes(Board *b, int my_color, int N, int search_depth, in
             board_undo(b);
         }
         char buf[8]; coord_to_str(cands[best_idx].row, cands[best_idx].col, buf);
+        /* Defense-in-depth symmetric to phase-4 BLACK (line 469-478): opponent
+         * reported these B5 candidates; if one is a forbidden move per 国规 9.x
+         * and we end up picking it, refuse and announce BLACK forfeit (= WHITE
+         * win). Opponent should never have proposed a forbidden coord but mistakes
+         * happen, and silently playing it would mask the rule violation. */
+        if (b->forbid_enabled) {
+            ForbidType ft = forbid_check_black(b, cands[best_idx].row, cands[best_idx].col);
+            if (ft != FORBID_NONE) {
+                fprintf(stderr, "[diag] phase-4 WHITE-side B5 forbid-leak at %s: type=%d (opponent proposed forbidden coord)\n",
+                        buf, ft);
+                printf("\n*** Game over: WHITE wins (BLACK B5 %s is forbidden -- opponent forfeit) ***\n", buf);
+                fflush(stdout);
+                return false;
+            }
+        }
         printf(">>> Engine picks candidate %d (= %s) for B5. Tell opponent.\n", best_idx + 1, buf);
         if (!board_place(b, cands[best_idx].row, cands[best_idx].col, BLACK)) {
             printf("B5 placement failed.\n"); return false;
