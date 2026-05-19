@@ -186,6 +186,45 @@ static int threat_defend_level(Board *b, int row, int col) {
     return classify_move_threat(b, row, col, opp);
 }
 
+/* compute_lmr — Late Move Reductions reduction amount.
+ *
+ * 返回 R ≥ 0。R == 0 表示不 reduce（move 进 whitelist 或上下文不满足触发条件）。
+ *
+ * Whitelist（任一命中 → R = 0，不 reduce）:
+ *   - depth_left < 3            （剩余深度太浅，reduce 无收益）
+ *   - searched < 3              （前 3 个 move 顺序最好，不能 reduce）
+ *   - is_pv_node                （PV 节点不 reduce，避免破坏主变）
+ *   - threat_create >= 2        （该 move 制造活三或更强威胁）
+ *   - threat_defend >= 3        （该 move 挡对方四级威胁，关键防守）
+ *   - is_killer                 （killer move）
+ *   - is_tt_best                （TT-best move）
+ *
+ * 公式（基于已 searched 的 move 数 + depth_left）:
+ *   searched ∈ [3, 6]   → R = 1
+ *   searched ∈ [7, 11]  → R = 2
+ *   searched >= 12      → R = 2 + (depth_left >= 6 ? 1 : 0)
+ * 上限: R = min(R, depth_left - 2)（保证 depth_left - 1 - R >= 1）。
+ */
+static int compute_lmr(int searched, int depth_left, int threat_create,
+                       int threat_defend, int is_killer_move, int is_tt_best) {
+    if (depth_left < 3)        return 0;
+    if (searched < 3)          return 0;
+    if (threat_create >= 2)    return 0;
+    if (threat_defend >= 3)    return 0;
+    if (is_killer_move)        return 0;
+    if (is_tt_best)            return 0;
+
+    int R;
+    if (searched <= 6)         R = 1;
+    else if (searched <= 11)   R = 2;
+    else                       R = 2 + (depth_left >= 6 ? 1 : 0);
+
+    int cap = depth_left - 2;
+    if (R > cap) R = cap;
+    if (R < 0)   R = 0;
+    return R;
+}
+
 /* ============== 四三 / 双四 / 五连 setup 检测（leaf-level threat extension）==============
  * classify_move_multi: 在 (row, col) 落 color 后，统计 4 个方向上各自的威胁。
  *   out_fours  = 该 cell 落子后形成 four（SIMPLE_FOUR / OPEN_FOUR）的方向数
@@ -490,8 +529,25 @@ static int alphabeta(Board *b, int ply, int depth_left, int alpha, int beta,
             /* First move: full window, inherit PV status */
             score = -alphabeta(b, ply + 1, depth_left - 1, -beta, -alpha, is_pv_node, nodes);
         } else {
-            /* Subsequent moves: null-window scout, forced non-PV */
-            score = -alphabeta(b, ply + 1, depth_left - 1, -alpha - 1, -alpha, 0, nodes);
+            /* Subsequent moves: null-window scout, possibly LMR-reduced, forced non-PV.
+             *
+             * LMR: 对"很可能 fail-low"的后段着法降深度搜（reduced scout）；如果意外
+             * fail-high，再用 full depth null-window 确认；若仍 fail-high 且在 PV
+             * 节点，最后用 full-window full-depth re-search。
+             *
+             * compute_lmr 返回 R = 0 表示不 reduce（等价于原 PVS scout）。
+             */
+            int tc_lmr = threat_create_level(b, r, c);
+            int td_lmr = threat_defend_level(b, r, c);
+            int km     = is_killer(ply, r, c);
+            int ttb    = (r == tt_r && c == tt_c);
+            int R = compute_lmr(searched, depth_left, tc_lmr, td_lmr, km, ttb);
+
+            score = -alphabeta(b, ply + 1, depth_left - 1 - R, -alpha - 1, -alpha, 0, nodes);
+            /* Reduced scout fail-high → re-search full depth null-window to confirm */
+            if (R > 0 && score > alpha) {
+                score = -alphabeta(b, ply + 1, depth_left - 1, -alpha - 1, -alpha, 0, nodes);
+            }
             /* fail-high in [alpha+1, beta) AND we are PV node → full-window re-search */
             if (score > alpha && score < beta && is_pv_node) {
                 score = -alphabeta(b, ply + 1, depth_left - 1, -beta, -alpha, 1, nodes);
