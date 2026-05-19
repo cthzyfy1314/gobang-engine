@@ -1,14 +1,17 @@
 /* src/main.c — 入口
  * 默认进入交互式 UI 主循环（人肉协议对战）。
- *   --white      我方执白（默认黑）
- *   --black      我方执黑（默认）
- *   --depth=N    搜索深度上限（默认 4）
- *   --time=N     每步思考时间预算 (ms)（默认 1000；0 = 不限时）
- *   --demo       跑 self-play demo 而非 UI（回归测试用）
+ *   --white         我方执白（默认黑）
+ *   --black         我方执黑（默认）
+ *   --depth=N       搜索深度上限（默认 4）
+ *   --time=N        每步思考时间预算 (ms)（默认 1000；0 = 不限时）
+ *   --auto-w4=XX    Phase-3 W4 强制使用坐标 XX（如 I8、G7）。
+ *                   仅当 --white 时生效；用于外部 adapter / 复盘工具同步开局
+ *   --demo          跑 self-play demo 而非 UI（回归测试用）
  */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 #ifdef _WIN32
 #include <windows.h>
 #endif
@@ -67,6 +70,7 @@ int main(int argc, char **argv) {
     int my_color = BLACK;
     int depth = 4;
     int demo_mode = 0;
+    int auto_w4_row = -1, auto_w4_col = -1;  /* -1 = disabled */
 
     for (int i = 1; i < argc; i++) {
         if      (!strcmp(argv[i], "--white"))         my_color = WHITE;
@@ -80,16 +84,31 @@ int main(int argc, char **argv) {
             _g_time_budget_ms = atoi(argv[i] + 7);
             if (_g_time_budget_ms < 0) _g_time_budget_ms = 0;
         }
+        else if (!strncmp(argv[i], "--auto-w4=", 10)) {
+            /* Parse coord like "I8" or "G7". Letter A-O = col 0-14, number 1-15 = row 15-1. */
+            const char *s = argv[i] + 10;
+            char letter = (char)toupper((unsigned char)s[0]);
+            int num = 0;
+            if (letter < 'A' || letter > 'O' || sscanf(s + 1, "%d", &num) != 1 ||
+                num < 1 || num > BOARD_SIZE) {
+                printf("Bad --auto-w4 coord: %s (expected like 'I8' or 'G7')\n", s);
+                return 1;
+            }
+            auto_w4_col = letter - 'A';
+            auto_w4_row = BOARD_SIZE - num;
+        }
         else if (!strcmp(argv[i], "--demo"))          demo_mode = 1;
         else {
             printf("Unknown option: %s\n", argv[i]);
-            printf("Usage: gobang-engine [--white|--black] [--depth=N] [--time=MS] [--demo]\n");
+            printf("Usage: gobang-engine [--white|--black] [--depth=N] [--time=MS] "
+                   "[--auto-w4=XX] [--demo]\n");
             return 1;
         }
     }
 
     if (demo_mode) run_demo(depth);
-    else           ui_main_loop(my_color, depth, _g_time_budget_ms);
+    else           ui_main_loop(my_color, depth, _g_time_budget_ms,
+                                auto_w4_row, auto_w4_col);
 
     return 0;
 }

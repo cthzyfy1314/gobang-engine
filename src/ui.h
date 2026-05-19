@@ -17,8 +17,12 @@ typedef enum {
  * my_color: 我方执子颜色（BLACK 或 WHITE）。
  * search_depth: αβ 最大搜索深度。
  * time_budget_ms: 每步思考预算(ms)；<=0 不限时。
+ * auto_w4_row / auto_w4_col: 若 >=0，phase-3 强制使用该坐标作为 W4（跳过搜索）。
+ *                            <0 表示禁用（默认行为：AI 自己算 W4）。
+ *                            主要给外部对战 adapter / 复盘工具用。
  */
-void ui_main_loop(int my_color, int search_depth, int time_budget_ms);
+void ui_main_loop(int my_color, int search_depth, int time_budget_ms,
+                  int auto_w4_row, int auto_w4_col);
 
 /* 绘制当前棋盘到 stdout。 */
 void ui_draw_board(const Board *b);

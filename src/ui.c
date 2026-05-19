@@ -582,7 +582,8 @@ static bool phase5_one_turn(Board *b, int my_color, int search_depth, int time_b
     }
 }
 
-void ui_main_loop(int my_color, int search_depth, int time_budget_ms) {
+void ui_main_loop(int my_color, int search_depth, int time_budget_ms,
+                  int auto_w4_row, int auto_w4_col) {
     Board b;
     board_init(&b);
 
@@ -592,6 +593,10 @@ void ui_main_loop(int my_color, int search_depth, int time_budget_ms) {
     printf("Search depth:    %d\n", search_depth);
     printf("Time budget/mv:  %s\n", time_budget_ms > 0 ? "see ms below" : "unlimited");
     if (time_budget_ms > 0) printf("                 %d ms\n", time_budget_ms);
+    if (auto_w4_row >= 0 && auto_w4_col >= 0) {
+        printf("Auto-W4 override: %c%d (skipping phase-3 search if AI=WHITE)\n",
+               'A' + auto_w4_col, BOARD_SIZE - auto_w4_row);
+    }
     printf("Flow follows spec section 6 phases 0-5: opening / swap / W4 / N-strikes / loop.\n");
 
     /* 阶段 1：开局 (3 手 + N) */
@@ -613,7 +618,26 @@ void ui_main_loop(int my_color, int search_depth, int time_budget_ms) {
     GameResult res = board_check_winner(&b);
     if (res == RESULT_NONE) {
         printf("\n=== Phase 3: White 4 (national rule 4) ===\n");
-        if (!phase5_one_turn(&b, my_color, search_depth, time_budget_ms)) return;
+        /* --auto-w4 override：若设置 + 当前是 AI 的回合（AI=WHITE）, 跳过 search,
+         * 直接落子。给外部 adapter / 复盘工具用。
+         * 注意：W4 是 WHITE 的招，所以 auto-W4 只在 my_color == WHITE 时有效。
+         * 若 my_color == BLACK（对手白方），仍走正常 phase5_one_turn 流程读 stdin。
+         */
+        if (my_color == WHITE && auto_w4_row >= 0 && auto_w4_col >= 0) {
+            if (b.cells[auto_w4_row][auto_w4_col] != EMPTY) {
+                printf("ERROR: --auto-w4 cell already occupied. Falling back to search.\n");
+                if (!phase5_one_turn(&b, my_color, search_depth, time_budget_ms)) return;
+            } else if (!board_place(&b, auto_w4_row, auto_w4_col, WHITE)) {
+                printf("ERROR: --auto-w4 board_place failed. Falling back to search.\n");
+                if (!phase5_one_turn(&b, my_color, search_depth, time_budget_ms)) return;
+            } else {
+                printf(">>> AI plays W4 = %c%d   (auto-w4 override, no search)\n",
+                       'A' + auto_w4_col, BOARD_SIZE - auto_w4_row);
+                fflush(stdout);
+            }
+        } else {
+            if (!phase5_one_turn(&b, my_color, search_depth, time_budget_ms)) return;
+        }
         ui_draw_board(&b);
     }
 
