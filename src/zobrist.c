@@ -6,6 +6,7 @@
 static uint64_t Z_KEY[2][BOARD_SIZE * BOARD_SIZE];
 static uint64_t Z_SIDE_KEY;
 static TTEntry  _tt[TT_SIZE];
+static int      _zob_initialized = 0;
 
 /* splitmix64 PRNG（fixed seed → 跨平台跨运行可重现）*/
 static uint64_t splitmix64(uint64_t *s) {
@@ -16,6 +17,13 @@ static uint64_t splitmix64(uint64_t *s) {
 }
 
 void zobrist_init(void) {
+    /* Idempotent guard: if a caller (e.g. board_init) auto-invokes us
+     * and the user has also called zobrist_init() explicitly from main,
+     * re-running would re-fill Z_KEY (same values, same seed — fine) but
+     * would also wipe TT (tt_clear), losing accumulated entries across
+     * a new game's first board_init. Early-return preserves both. */
+    if (_zob_initialized) return;
+
     uint64_t seed = 0x9E3779B97F4A7C15ULL;
     for (int color = 0; color < 2; color++) {
         for (int i = 0; i < BOARD_SIZE * BOARD_SIZE; i++) {
@@ -24,6 +32,7 @@ void zobrist_init(void) {
     }
     Z_SIDE_KEY = splitmix64(&seed);
     tt_clear();
+    _zob_initialized = 1;
 }
 
 uint64_t zobrist_xor_piece(uint64_t h, int row, int col, int color) {

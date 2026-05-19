@@ -1,10 +1,13 @@
 /* src/board.c */
 #define _CRT_SECURE_NO_WARNINGS
+#include <assert.h>
 #include <string.h>
 #include "board.h"
 #include "zobrist.h"
 
 void board_init(Board *b) {
+    zobrist_init();   /* idempotent; ensures Z_KEY/Z_SIDE_KEY are populated
+                       * before any board operations rely on incremental hash. */
     memset(b->cells, EMPTY, sizeof(b->cells));
     b->move_count = 0;
     b->zobrist_hash = 0;
@@ -18,9 +21,16 @@ bool board_in_bounds(int row, int col) {
 }
 
 bool board_place(Board *b, int row, int col, int color) {
+    /* Out-of-turn placement would desync incremental zobrist from
+     * compute() — same hash invariant broken silently. Assertion
+     * makes the precondition explicit. Disabled in NDEBUG release
+     * builds (zero cost). */
+    assert(color == b->side_to_move);
+
     if (!board_in_bounds(row, col)) return false;
     if (b->cells[row][col] != EMPTY) return false;
     if (color != BLACK && color != WHITE) return false;
+    if (b->move_count >= BOARD_SIZE * BOARD_SIZE) return false;  /* board full */
 
     b->cells[row][col] = (uint8_t)color;
     b->history[b->move_count].row = (int8_t)row;
