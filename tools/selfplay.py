@@ -167,7 +167,25 @@ class EngineProc:
         return strip_ansi("".join(self.buf))
 
     def consume_transcript(self) -> str:
-        """Return transcript so far AND clear buffer (so next call only sees new)."""
+        """Return transcript so far AND clear buffer (so next call only sees new).
+
+        Crucially, drain the reader-thread queue first — chars sitting in queue
+        haven't reached self.buf yet, and would otherwise leak into the NEXT
+        read_until() as stale data from the previous phase.
+        """
+        # Drain pending queue into buf so we capture everything up to "now".
+        while True:
+            try:
+                ch = self._q.get_nowait()
+            except queue.Empty:
+                break
+            if ch is None:
+                # Re-post EOF so reader_loop's termination is preserved
+                self._q.put(None)
+                break
+            if isinstance(ch, bytes):
+                ch = ch.decode("utf-8", errors="replace")
+            self.buf.append(ch)
         txt = strip_ansi("".join(self.buf))
         self.buf = []
         return txt
