@@ -527,6 +527,13 @@ static bool phase5_one_turn(Board *b, int my_color, int search_depth, int time_b
             }
         }
         printf(">>> AI plays %s = %s   (score=%d, nodes=%ld)\n", label, buf, r.score, r.nodes_searched);
+        /* Force flush so harness / pipe consumers see the AI move immediately,
+         * not buffered until the next read prompt. At deep search (d=12+), the
+         * gap to the next prompt is long enough that buffered output triggers
+         * harness timeouts ("no new AI move (count=N)" errors at ~17% rate at
+         * d=12 t=1000). Found via /code-review of PVS commit 062589b.
+         */
+        fflush(stdout);
         board_place(b, r.best_move.row, r.best_move.col, active);
         return true;
     }
