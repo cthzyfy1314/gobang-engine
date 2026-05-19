@@ -24,7 +24,8 @@ typedef enum {
     PAT_JUMP_OPEN_THREE  = 9,   /* 跳活三：_XX_X_ / _X_XX_ → 下一手成活四 */
     PAT_JUMP_OPEN_FOUR   = 10,  /* 跳活四：_X_XXX_ / _XX_XX_ / _XXX_X_ → 填缝成五连 */
     PAT_PROTO_THREE      = 11,  /* 原活三：双端开放 2 连且至少一端可扩展到 5（__XX_ / _XX__）→ 一手成活三 */
-    PAT_COUNT            = 12
+    PAT_SLEEP_JUMP_FOUR  = 12,  /* 眠跳四：X_XXX / XXX_X 一端被堵（边界或对方子）→ 填缝仍可成 5 */
+    PAT_COUNT            = 13
 } Pattern;
 
 /* 评分表（spec § 3.2）。索引由 Pattern 枚举决定。 */

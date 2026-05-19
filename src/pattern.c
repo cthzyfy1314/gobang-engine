@@ -16,7 +16,8 @@ const int PATTERN_SCORE[PAT_COUNT] = {
     900,       /* PAT_BROKEN_FOUR — 比冲四稍弱，能成5的潜在威胁 */
     800,       /* PAT_JUMP_OPEN_THREE — 比活三稍弱，会变活四 */
     9000,      /* PAT_JUMP_OPEN_FOUR — 跟活四接近，填缝可直接成5 */
-    300        /* PAT_PROTO_THREE — 原活三：__XX_ / _XX__ / __XX__，一手成活三 */
+    300,       /* PAT_PROTO_THREE — 原活三：__XX_ / _XX__ / __XX__，一手成活三 */
+    900        /* PAT_SLEEP_JUMP_FOUR — 眠跳四：一端被堵的 X_XXX / XXX_X，填缝成 5 */
 };
 
 void pattern_count_in_line(const int8_t *line, int len, int color, PatternStats *out) {
@@ -81,6 +82,9 @@ static void count_broken_in_line(const int8_t *line, int len, int color, Pattern
         if ((a==B && b==B && c==0 && d==B) ||
             (a==B && b==0 && c==B && d==B)) {
             out->counts[PAT_JUMP_OPEN_THREE]++;
+            /* Dedup: the embedded XX subrun (双端开放) was counted as OPEN_TWO
+             * by pattern_count_in_line — subtract it. */
+            if (out->counts[PAT_OPEN_TWO] > 0) out->counts[PAT_OPEN_TWO]--;
         }
     }
 
@@ -97,15 +101,65 @@ static void count_broken_in_line(const int8_t *line, int len, int color, Pattern
             out->counts[PAT_OPEN_THREE]--;
             continue;
         }
-        /* _XX_XX_ : no 3-consec, no dedup */
+        /* _XX_XX_ : no 3-consec, but two XX subruns each counted as OPEN_TWO
+         * by pattern_count_in_line — subtract both. */
         if (a==B && b==B && c==0 && d==B && e==B) {
             out->counts[PAT_JUMP_OPEN_FOUR]++;
+            if (out->counts[PAT_OPEN_TWO] >= 2) out->counts[PAT_OPEN_TWO] -= 2;
+            else out->counts[PAT_OPEN_TWO] = 0;
             continue;
         }
         /* _XXX_X_ : 3-consec at line[i+1..i+3] → already OPEN_THREE */
         if (a==B && b==B && c==B && d==0 && e==B) {
             out->counts[PAT_JUMP_OPEN_FOUR]++;
             out->counts[PAT_OPEN_THREE]--;
+            continue;
+        }
+    }
+
+    /* Sleep jump-four: 5-cell core X_XXX or XXX_X, with at least one outer end
+     * BLOCKED (boundary or opponent). Filling the single gap → FIVE, so threat
+     * is similar to BROKEN_FOUR. JUMP_OPEN_FOUR already covered the both-ends-
+     * empty case; here we cover one-or-both blocked.
+     *
+     * Dedup the embedded 3-consec (XXX) which pattern_count_in_line already
+     * counted as OPEN_THREE or SLEEP_THREE depending on the 3-consec's own
+     * boundary (its inner neighbor is the gap = empty, outer neighbor is the
+     * outer end of the 5-window).
+     */
+    for (int i = 0; i + 5 <= len; i++) {
+        int8_t a = line[i], b = line[i+1], c = line[i+2], d = line[i+3], e = line[i+4];
+        int left_pos  = i - 1;
+        int right_pos = i + 5;
+        int left_empty  = (left_pos  >= 0)  && (line[left_pos]  == 0);
+        int right_empty = (right_pos <  len) && (line[right_pos] == 0);
+        /* Sleep variant: NOT both ends empty (JUMP_OPEN_FOUR handles both-empty) */
+        if (left_empty && right_empty) continue;
+
+        /* X_XXX core: 3-consec at line[i+2..i+4] (right side of window).
+         * The 3-consec's left inner neighbor is line[i+1]=0 (gap).
+         * Its right outer neighbor is line[i+5] = right_pos's cell.
+         * → 3-consec was OPEN_THREE iff right_empty, else SLEEP_THREE. */
+        if (a==B && b==0 && c==B && d==B && e==B) {
+            out->counts[PAT_SLEEP_JUMP_FOUR]++;
+            if (right_empty) {
+                if (out->counts[PAT_OPEN_THREE] > 0) out->counts[PAT_OPEN_THREE]--;
+            } else {
+                if (out->counts[PAT_SLEEP_THREE] > 0) out->counts[PAT_SLEEP_THREE]--;
+            }
+            continue;
+        }
+        /* XXX_X core: 3-consec at line[i..i+2] (left side of window).
+         * Its left outer neighbor is line[i-1] = left_pos's cell.
+         * Its right inner neighbor is line[i+3]=0 (gap).
+         * → 3-consec was OPEN_THREE iff left_empty, else SLEEP_THREE. */
+        if (a==B && b==B && c==B && d==0 && e==B) {
+            out->counts[PAT_SLEEP_JUMP_FOUR]++;
+            if (left_empty) {
+                if (out->counts[PAT_OPEN_THREE] > 0) out->counts[PAT_OPEN_THREE]--;
+            } else {
+                if (out->counts[PAT_SLEEP_THREE] > 0) out->counts[PAT_SLEEP_THREE]--;
+            }
             continue;
         }
     }
@@ -145,7 +199,7 @@ static void count_broken_in_line(const int8_t *line, int len, int color, Pattern
                     int right_ext = (q + 1 < len) && (line[q + 1] == 0);
                     if (left_ext || right_ext) {
                         out->counts[PAT_PROTO_THREE]++;
-                        out->counts[PAT_OPEN_TWO]--;
+                        if (out->counts[PAT_OPEN_TWO] > 0) out->counts[PAT_OPEN_TWO]--;
                     }
                 }
             }
