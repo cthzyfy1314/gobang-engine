@@ -255,6 +255,52 @@ def parse_game_over(txt: str):
 
 
 # ---------------------------------------------------------------------------
+# NN training-data capture — mirror the engine board in Python so we can dump
+# (position, search-score) pairs per ply. Stays stdlib-only; numpy is only
+# touched in main() when --nn-out is set. Board convention matches
+# nn/encoding.py / src/board.h: cells[r][c], r=0 top row, display=(chr('A'+c),
+# 15-r), {EMPTY=0, BLACK=1, WHITE=2}.
+# ---------------------------------------------------------------------------
+
+BOARD_N = 15
+EMPTY_INT, BLACK_INT, WHITE_INT = 0, 1, 2
+
+
+def coord_to_rc(coord: str):
+    """'H8' -> (r, c). Letter = column (A..O), number = display row (1..15)."""
+    coord = coord.strip().upper()
+    col = ord(coord[0]) - ord("A")
+    row_disp = int(coord[1:])
+    r = BOARD_N - row_disp
+    c = col
+    if not (0 <= r < BOARD_N and 0 <= c < BOARD_N):
+        raise ValueError(f"coord out of range: {coord}")
+    return r, c
+
+
+class BoardTracker:
+    """Replays the move sequence to snapshot positions for NN labels.
+
+    Placement order/colors MUST match the national-rule sequence the harness
+    relays (B1,W2,B3 opening; W4; B5 pick; then alternating W6,B7,...).
+    """
+
+    def __init__(self):
+        self.cells = [EMPTY_INT] * (BOARD_N * BOARD_N)
+
+    def place(self, coord: str, color: int):
+        r, c = coord_to_rc(coord)
+        idx = r * BOARD_N + c
+        if self.cells[idx] != EMPTY_INT:
+            raise ValueError(f"cell already occupied at {coord}")
+        self.cells[idx] = color
+
+    def snapshot(self):
+        """Flat row-major copy (len 225); reshape(15,15) gives cells[r][c]."""
+        return list(self.cells)
+
+
+# ---------------------------------------------------------------------------
 # Game driver — runs one full game between two engine instances.
 # ---------------------------------------------------------------------------
 
@@ -272,6 +318,7 @@ def run_one_game(
     time_ms: int,
     game_timeout: float = 120.0,
     n_strikes: int = 5,
+    record_samples: bool = False,
 ):
     """Play one game; return dict with result + stats.
 
@@ -279,6 +326,11 @@ def run_one_game(
     engine_white plays WHITE (started with --white).
     Both share `opening_idx` from OPENINGS table; no swap (phase 2 = '1' both
     sides).
+
+    If record_samples, also collect per-ply (position, side-to-move, score)
+    triples in result["samples"]; outcome labels are assigned later in main()
+    once the game result is known. Capture is best-effort and never aborts the
+    game — on any tracker error we silently stop recording this game.
     """
     opening = OPENINGS[opening_idx]
     name, b1, w2, b3 = opening
@@ -291,6 +343,33 @@ def run_one_game(
     opp_kept_white = "1"  # phase 2 input: 1 = no swap, 2 = swap. We never swap.
     # Phase-1 line: "B1 W2 B3 N"
     phase1_line = f"{b1} {w2} {b3} {n_strikes}"
+
+    # --- NN sample capture (best-effort; disabled on first tracker error) ----
+    samples = []  # list of (cells_flat[225], stm_int, score_int)
+    _trk = {"t": BoardTracker() if record_samples else None}
+
+    def place(coord, color):
+        t = _trk["t"]
+        if t is None:
+            return
+        try:
+            t.place(coord, color)
+        except Exception:
+            _trk["t"] = None  # bad relay/coord -> stop recording, keep prior
+
+    def rec(color, score):
+        t = _trk["t"]
+        if t is None:
+            return
+        try:
+            samples.append((t.snapshot(), int(color), int(score)))
+        except Exception:
+            _trk["t"] = None
+
+    # Opening stones are book moves (no search score), just put them on board.
+    place(b1, BLACK_INT)
+    place(w2, WHITE_INT)
+    place(b3, BLACK_INT)
 
     eb = EngineProc(engine_black, ["--black"] + pcmd)
     ew = EngineProc(engine_white, ["--white"] + pcmd)
@@ -330,7 +409,9 @@ def run_one_game(
                 result = go
                 raise _GameEnded()
             raise GameError(f"phase3: white engine did not report AI move; tail=\n{txt_w[-400:]}")
-        _, w4_coord, _, _ = wmove
+        _, w4_coord, w4_score, _ = wmove
+        rec(WHITE_INT, w4_score)   # position before W4, white to move
+        place(w4_coord, WHITE_INT)
         eb.send(w4_coord)
         plies = 4
 
@@ -366,6 +447,13 @@ def run_one_game(
                 raise _GameEnded()
             raise GameError(f"phase4: white did not pick a candidate; tail=\n{txt_w[-400:]}")
         picked_index = int(pick_match.group(1))  # 1-based
+        # Record the B5 position (black to move) with the picked candidate's
+        # search score, then place it. cands aligns with cand_coords.
+        if 1 <= picked_index <= len(cands):
+            rec(BLACK_INT, cands[picked_index - 1][2])
+            place(cands[picked_index - 1][1], BLACK_INT)
+        else:
+            _trk["t"] = None  # unexpected index -> stop recording safely
         # Tell black which index was picked.
         eb.send(str(picked_index))
         plies = 5
@@ -390,7 +478,9 @@ def run_one_game(
         w_ai_count = 1  # W6 already played
 
         # Process W6 -> send to black.
-        _, w6_coord, _, _ = ew_pending_move
+        _, w6_coord, w6_score, _ = ew_pending_move
+        rec(WHITE_INT, w6_score)   # position before W6, white to move
+        place(w6_coord, WHITE_INT)
         eb.send(w6_coord)
 
         side_to_move = "BLACK"  # black to compute B7
@@ -404,9 +494,11 @@ def run_one_game(
                 go = parse_game_over(txt_b)
                 all_moves = AI_PLAYS_RE.findall(txt_b)
                 if len(all_moves) > b_ai_count:
-                    lbl, coord, _, _ = all_moves[b_ai_count]
+                    lbl, coord, score_s, _ = all_moves[b_ai_count]
                     b_ai_count += 1
                     plies += 1
+                    rec(BLACK_INT, score_s)   # position before this black move
+                    place(coord, BLACK_INT)
                     if go:
                         result = go
                         raise _GameEnded()
@@ -424,9 +516,11 @@ def run_one_game(
                 go = parse_game_over(txt_w)
                 all_moves = AI_PLAYS_RE.findall(txt_w)
                 if len(all_moves) > w_ai_count:
-                    lbl, coord, _, _ = all_moves[w_ai_count]
+                    lbl, coord, score_s, _ = all_moves[w_ai_count]
                     w_ai_count += 1
                     plies += 1
+                    rec(WHITE_INT, score_s)   # position before this white move
+                    place(coord, WHITE_INT)
                     if go:
                         result = go
                         raise _GameEnded()
@@ -482,6 +576,7 @@ def run_one_game(
         "result": result,
         "total_time_s": round(total_time, 3),
         "error": last_error,
+        "samples": samples,  # [] unless record_samples; outcome added in main()
     }
 
 
@@ -556,6 +651,10 @@ def build_parser():
                    help="Pick openings by rotation through 26 or random.")
     p.add_argument("--quiet", action="store_true",
                    help="Suppress per-game progress lines.")
+    p.add_argument("--nn-out", default=None,
+                   help="If set, capture per-ply (position, score, outcome) "
+                        "triples and write them to this .npz for NN training "
+                        "(e.g. nn/data/selfplay_v1.npz). Requires numpy.")
     return p
 
 
@@ -590,7 +689,7 @@ def schedule_games(args, rng):
     return games
 
 
-def _worker(spec, depth, time_ms, game_timeout, n_strikes):
+def _worker(spec, depth, time_ms, game_timeout, n_strikes, record_samples=False):
     return run_one_game(
         game_id=spec["game_id"],
         engine_black=spec["engine_black"],
@@ -600,6 +699,7 @@ def _worker(spec, depth, time_ms, game_timeout, n_strikes):
         time_ms=time_ms,
         game_timeout=game_timeout,
         n_strikes=n_strikes,
+        record_samples=record_samples,
     )
 
 
@@ -655,6 +755,67 @@ def summarize(results, ab_mode, engine_a=None, engine_b=None):
     return summary
 
 
+def dump_nn_dataset(results, path):
+    """Aggregate per-ply samples into an .npz training set.
+
+    Only decisive/drawn games contribute (outcome label must be well-defined).
+    Arrays (N = total positions):
+      cells   (N,15,15) int8   {0,1,2}, cells[r][c]
+      stm     (N,)      int8    side-to-move at that position {1,2}
+      score   (N,)      float32 raw engine search score (stm perspective)
+      outcome (N,)      float32 game result from stm perspective {0,0.5,1}
+      game_id (N,)      int32   source game (for leakage-free train/val split)
+
+    Labels: 2.1 distillation target = sigmoid(score/scale) (computed in
+    train.py so scale is tunable); `outcome` is for 2.3 combined loss. We store
+    raw cells (not pre-encoded planes) so the 2.2 HalfLine encoder can reuse the
+    same dataset without re-running self-play.
+    """
+    import numpy as np  # local import: only --nn-out path needs numpy
+
+    decisive = {"BLACK_WIN", "WHITE_WIN", "DRAW"}
+    cells_l, stm_l, score_l, out_l, gid_l = [], [], [], [], []
+    n_games_used = 0
+    for r in results:
+        res = r.get("result")
+        if res not in decisive:
+            continue
+        samples = r.get("samples") or []
+        if not samples:
+            continue
+        n_games_used += 1
+        for cells_flat, stm, score in samples:
+            if res == "DRAW":
+                oc = 0.5
+            elif (res == "BLACK_WIN" and stm == BLACK_INT) or \
+                 (res == "WHITE_WIN" and stm == WHITE_INT):
+                oc = 1.0
+            else:
+                oc = 0.0
+            cells_l.append(cells_flat)
+            stm_l.append(stm)
+            score_l.append(score)
+            out_l.append(oc)
+            gid_l.append(r["game_id"])
+
+    n = len(cells_l)
+    if n == 0:
+        print("[nn] no samples captured (no decisive games?) — nothing written.")
+        return 0
+
+    cells = np.asarray(cells_l, dtype=np.int8).reshape(-1, BOARD_N, BOARD_N)
+    stm = np.asarray(stm_l, dtype=np.int8)
+    score = np.asarray(score_l, dtype=np.float32)
+    outcome = np.asarray(out_l, dtype=np.float32)
+    game_id = np.asarray(gid_l, dtype=np.int32)
+
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    np.savez_compressed(path, cells=cells, stm=stm, score=score,
+                        outcome=outcome, game_id=game_id)
+    print(f"[nn] wrote {n} positions from {n_games_used} games -> {path}")
+    return n
+
+
 def main(argv=None):
     args = build_parser().parse_args(argv)
 
@@ -684,7 +845,8 @@ def main(argv=None):
     with concurrent.futures.ProcessPoolExecutor(max_workers=args.parallel) as ex:
         futures = {
             ex.submit(_worker, spec, args.depth, args.time_ms,
-                      args.game_timeout, args.n_strikes): spec
+                      args.game_timeout, args.n_strikes,
+                      args.nn_out is not None): spec
             for spec in specs
         }
         for fut in concurrent.futures.as_completed(futures):
@@ -729,9 +891,12 @@ def main(argv=None):
     summary["time_ms"] = args.time_ms
     summary["parallel"] = args.parallel
 
+    # Keep raw position samples out of the JSON (they go to the .npz); they'd
+    # bloat the file by orders of magnitude.
+    games_json = [{k: v for k, v in r.items() if k != "samples"} for r in results]
     out = {
         "summary": summary,
-        "games": results,
+        "games": games_json,
     }
     with open(args.out, "w", encoding="utf-8") as f:
         json.dump(out, f, indent=2, ensure_ascii=False)
@@ -757,6 +922,9 @@ def main(argv=None):
               f"[95% CI {ab['elo_ci95_lo']} .. {ab['elo_ci95_hi']}]")
     print()
     print(f"  results JSON: {args.out}")
+
+    if args.nn_out:
+        dump_nn_dataset(results, args.nn_out)
     return 0
 
 
