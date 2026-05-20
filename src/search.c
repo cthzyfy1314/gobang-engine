@@ -71,7 +71,6 @@ void search_reset(void) {
 /* ============== Time-budget helpers ============== */
 static clock_t _deadline = 0;       /* 0 表示不限时 */
 static int     _time_up  = 0;
-static int     _budget_ms = 0;
 
 static int check_time(void) {
     if (_deadline == 0) return 0;
@@ -332,7 +331,6 @@ int search_find_n_distinct(Board *b, int depth, int n_want, Move *out, int *out_
     int alpha = -SEARCH_INF, beta = SEARCH_INF;
 
     /* time budget setup（与 search_best_move_timed 同机制）*/
-    _budget_ms = time_budget_ms;
     if (time_budget_ms > 0) {
         _deadline = clock() + (clock_t)((long long)time_budget_ms * CLOCKS_PER_SEC / 1000);
     } else {
@@ -423,12 +421,9 @@ int search_find_n_distinct(Board *b, int depth, int n_want, Move *out, int *out_
         picked++;
     }
 
-    /* Pass B (fallback): 不足 n_want 时放宽约束，按分数补足。 */
+    /* Pass B (fallback): 不足 n_want 时放宽 Chebyshev>=2 distinctness (国规 rule 7)，
+     * 按分数补足剩余槽位。位置过于拥挤时正常发生，非错误。 */
     if (picked < n_want && picked < valid_n) {
-        fprintf(stderr, "[search_find_n_distinct] WARNING: only %d candidates pass "
-                        "Chebyshev>=2 distinctness (国规 rule 7); falling back to "
-                        "score-only for remaining %d slot(s).\n",
-                        picked, n_want - picked);
         for (int k = 0; k < valid_n && picked < n_want; k++) {
             int idx = sort_idx[k];
             if (used[idx]) continue;
@@ -527,6 +522,10 @@ static int alphabeta(Board *b, int ply, int depth_left, int alpha, int beta,
         /* Threat extension: 在 leaf 处做 1-ply 战术检测。
          * 若 side_to_move 有必胜 setup（五连 / 双四 / 四三），返回近 mate 分。
          * 这让 αβ 在不增加深度的情况下"看到"对方的 forcing 战术，避免被 双重威胁 偷袭。
+         *
+         * 已知非对称（KNOWN_BUGS #29 残留）：只检测「己方有杀」，不检测「对方已有
+         * 不可挡威胁、本方却无杀」的必负局面——后者会落到下面的静态 pattern_evaluate，
+         * 仍有 horizon 盲点。NNUE eval 接管后此扩展整体退役，故不在此补。
          */
         if (color_has_winning_setup(b, b->side_to_move)) {
             return TACTICAL_WIN_SCORE - ply;
@@ -789,9 +788,6 @@ static int vcx_search(Board *b, int ply, int depth_left, int allow_three, long *
         if (!board_place(b, r, c, color)) return 0;
         int score = -vcx_search(b, ply + 1, depth_left - 1, allow_three, nodes, NULL);
         board_undo(b);
-        if (root_choice && score > 0 && !IS_MATE_SCORE(-score)) {
-            /* 不是必胜，不写 root_choice */
-        }
         if (root_choice && score >= SEARCH_INF - SEARCH_MATE_MARGIN) {
             root_choice->row = (int8_t)r;
             root_choice->col = (int8_t)c;
@@ -800,12 +796,11 @@ static int vcx_search(Board *b, int ply, int depth_left, int allow_three, long *
         return score;
     }
 
-    /* 普通节点：只扩展 forcing moves；若本方一个都没有 → fail (0) */
+    /* 普通节点：只扩展 forcing moves；若本方一个都没有 → fail (0)。
+     * VCx 是「证明必胜」搜索：只关心是否存在到达 mate 阈值的 forcing 序列，
+     * 不需要追踪非必胜的 best score。 */
     if (n_forcing == 0) return 0;
 
-    int best = -SEARCH_INF * 2;  /* 留 sentinel；我们关心的是 >= mate threshold */
-    Move best_move_local = forcing[0];
-    int proven_win = 0;
     for (int i = 0; i < n_forcing; i++) {
         int r = forcing[i].row, c = forcing[i].col;
         if (!board_place(b, r, c, color)) continue;
@@ -821,10 +816,6 @@ static int vcx_search(Board *b, int ply, int depth_left, int allow_three, long *
             }
             return score;
         }
-        if (score > best) { best = score; best_move_local = forcing[i]; }
-        (void)best_move_local;
-        if (score > 0) proven_win = 1; /* 部分赢，但不是 mate */
-        (void)proven_win;
     }
     /* 没找到必胜 */
     return 0;
@@ -866,7 +857,6 @@ SearchResult search_best_move_timed(Board *b, int max_depth, int time_budget_ms)
     clear_killers_history();  /* killer/history per-call reset 仍合理 */
 
     /* time budget setup */
-    _budget_ms = time_budget_ms;
     if (time_budget_ms > 0) {
         _deadline = clock() + (clock_t)((long long)time_budget_ms * CLOCKS_PER_SEC / 1000);
     } else {
@@ -879,7 +869,8 @@ SearchResult search_best_move_timed(Board *b, int max_depth, int time_budget_ms)
     if (n == 0) return result;
 
     /* ============= Step 1: 尝试 VCF（仅当 budget > 0 时；快搜） =============
-     * VCF 节点数小，单独切一小段时间预算（最多 budget 的 30%）
+     * VCF 节点数小，先做一遍：命中即直接返回 mate。它与下面的 ID αβ 共享同一个
+     * 全局 _deadline（不另设子预算），由全局超时兜底。
      */
     if (time_budget_ms != 0) {
         Move vcf_choice;

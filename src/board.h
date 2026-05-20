@@ -21,10 +21,10 @@ typedef struct {
 typedef struct {
     uint8_t cells[BOARD_SIZE][BOARD_SIZE];   /* 0=EMPTY, 1=BLACK, 2=WHITE */
     uint16_t move_count;
-    uint64_t zobrist_hash;                   /* Day 1 placeholder, 留 0 */
+    uint64_t zobrist_hash;                   /* 增量维护：board_place/undo XOR 更新 */
     int side_to_move;                        /* BLACK or WHITE */
     Move history[BOARD_SIZE * BOARD_SIZE];
-    bool forbid_enabled;                     /* Day 1 placeholder, 默认 true */
+    bool forbid_enabled;                     /* 是否启用黑禁手判定（默认 true） */
 } Board;
 
 /* GameResult — 对应 Spec § 3.4 + § 1.4 国规 9.1 / 9.2 */
@@ -32,7 +32,9 @@ typedef enum {
     RESULT_NONE = 0,
     RESULT_BLACK_WIN = 1,                    /* 黑五连，包括"黑五连+禁手同时"特例 */
     RESULT_WHITE_WIN_NORMAL = 2,             /* 白五连或白长连 */
-    RESULT_WHITE_WIN_BY_BLACK_FORBID = 3,    /* 黑禁手判负，Day 1 暂不触发 */
+    RESULT_WHITE_WIN_BY_BLACK_FORBID = 3,    /* 黑禁手判负；保留值——当前 board_check_winner
+                                              * 把长连按 WHITE_WIN_NORMAL 处理，不返回此值
+                                              * （见 ui.c P2-2 note），仅供防御性比较使用 */
     RESULT_DRAW = 4                          /* 全盘满 */
 } GameResult;
 

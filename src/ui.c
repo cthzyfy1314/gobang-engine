@@ -117,6 +117,10 @@ bool ui_parse_input(const char *line, int *row, int *col, UICommand *cmd) {
         line++;
         int n = 0, digits = 0;
         while (*line >= '0' && *line <= '9') {
+            if (digits >= 2) {   /* 行号 1..15 至多 2 位；拒绝更长输入以避免 int 溢出 UB */
+                *cmd = UI_CMD_INVALID;
+                return false;
+            }
             n = n * 10 + (*line - '0');
             line++; digits++;
         }
@@ -457,7 +461,11 @@ static bool phase4_n_strikes(Board *b, int my_color, int N, int search_depth, in
             fflush(stdout);
             if (!read_line(line, sizeof(line))) return false;
             if (line[0] == 'q' || line[0] == 'Q') return false;
-            idx = atoi(line);
+            /* strtol（非 atoi）：atoi 在溢出时是 UB；strtol 饱和到 LONG_MAX/MIN，
+             * 范围校验仍能挡住，且能拒绝非数字前缀。 */
+            char *endp = NULL;
+            long v = strtol(line, &endp, 10);
+            idx = (endp != line && v >= 1 && v <= got) ? (int)v : 0;
             if (idx >= 1 && idx <= got) break;
             printf("Invalid index. Need 1..%d (the position number, not a coordinate). Try again.\n", got);
         }

@@ -1,9 +1,13 @@
-/* src/pattern.h — 棋型识别 + 评估函数
+/* src/pattern.h — 棋型识别 + 手工评估函数
  * 对应 Spec § 3.2 棋型评估 / § 4.1 pattern 模块
  *
- * 简化版（7 棋型 + NONE）：
- *   只识别连续段，不识别跳子（_XX_X_、_X_XXX_）。
- *   跳活三 / 真活三的精确判定留给 forbid 模块（5/3-5/5）。
+ * 13 类棋型（含 NONE）：连续段（活/眠 二~五）+ 跳子型（跳冲四 / 跳活三 / 跳活四 /
+ * 原活三 / 眠跳四，见下方枚举）。真活三 / 长连禁手的精确判定仍归 forbid 模块。
+ *
+ * ⚠️ 已知不完美（Phase 2 NNUE 路线下属 throwaway，刻意不修）：
+ *   跳子型的 dedup 在某些分裂型上会重复计数（如 _XX_XX_），eval 量级偏大；且 dedup
+ *   作用于全局累加器、跨方向/跨线共享。这些是 eval 调优问题，不影响合法性/胜负判定。
+ *   整个 pattern_evaluate 将被 NNUE（nn/）替换，故不在此投入修复。
  */
 #ifndef PATTERN_H_
 #define PATTERN_H_
