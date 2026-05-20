@@ -33,3 +33,20 @@ __pycache__/
 # Backup
 *~
 *.bak
+
+# Session scratch / debug output (refactor-clean 2026-05-19)
+_scratch/
+NEXT_SESSION.md
+.claude/
+
+# Debug artifacts at repo root (prevent re-pollution)
+ab_*.log
+ab_*.json
+p[0-9]*.log
+p[0-9]*.txt
+debug_*.log
+debug_*.txt
+test_p[0-9]*.py
+test_p[0-9]*.txt
+baseline_*.log
+baseline_*.json
