@@ -1,0 +1,8 @@
+data/
+checkpoints/
+tutorial/
+__pycache__/
+*.pyc
+*.npz
+*.pt
+*.bin
