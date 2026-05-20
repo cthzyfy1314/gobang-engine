@@ -462,6 +462,25 @@ int search_evaluate(const Board *b) {
  * Root caller passes is_pv_node=1. Recursive calls only the FIRST move stays PV;
  * all others are forced non-PV scouts.
  */
+/* === Mate-distance TT normalization ===
+ * Mate scores are root-relative: SEARCH_INF - dist_from_root. A raw store to
+ * TT bakes in the storing node's ply, so reusing the same position via a
+ * different path (different ply) would report a wrong mate distance. Fix:
+ * store position-intrinsic (re-base by +ply for wins / -ply for losses),
+ * then undo on load. Standard chess-engine technique ("mate scores in TT").
+ * Non-mate scores (incl. TACTICAL_WIN_SCORE) pass through unchanged.
+ */
+static int tt_score_for_store(int score, int ply) {
+    if (score >=  (SEARCH_INF - SEARCH_MATE_MARGIN)) return score + ply;
+    if (score <= -(SEARCH_INF - SEARCH_MATE_MARGIN)) return score - ply;
+    return score;
+}
+static int tt_score_for_load(int score, int ply) {
+    if (score >=  (SEARCH_INF - SEARCH_MATE_MARGIN)) return score - ply;
+    if (score <= -(SEARCH_INF - SEARCH_MATE_MARGIN)) return score + ply;
+    return score;
+}
+
 static int alphabeta(Board *b, int ply, int depth_left, int alpha, int beta,
                      int is_pv_node, long *nodes) {
     (*nodes)++;
@@ -479,10 +498,12 @@ static int alphabeta(Board *b, int ply, int depth_left, int alpha, int beta,
      */
     const TTEntry *e = tt_get(b->zobrist_hash);
     if (e != NULL && e->depth >= depth_left) {
-        if (e->flag == TT_FLAG_EXACT) return e->score;
+        /* load-normalize mate scores back to root-relative for this ply */
+        int tt_score = tt_score_for_load(e->score, ply);
+        if (e->flag == TT_FLAG_EXACT) return tt_score;
         if (!is_pv_node) {
-            if (e->flag == TT_FLAG_LOWER && e->score >= beta)  return e->score;
-            if (e->flag == TT_FLAG_UPPER && e->score <= alpha) return e->score;
+            if (e->flag == TT_FLAG_LOWER && tt_score >= beta)  return tt_score;
+            if (e->flag == TT_FLAG_UPPER && tt_score <= alpha) return tt_score;
         }
         /* PV node + 非 EXACT bound: 不切断，落到下面正常 search */
     }
@@ -490,9 +511,8 @@ static int alphabeta(Board *b, int ply, int depth_left, int alpha, int beta,
     /* 终局检查
      * Fix 3: mate score 用 ply（root-relative）而非 b->move_count（绝对手数）。
      * 这样 engine 偏好"步数更短"的 mate（SEARCH_INF - ply 越小越远）。
-     * TODO: TT 中 mate score 的 store/load 应做 ply 归一化
-     *   (store: score += ply; load: score -= ply)，当前未做 — 短期内可能造成
-     *   跨节点 mate-distance 略有失真，但不影响 mate 正负判定。
+     * TT mate-distance 归一化已实现 (tt_score_for_store/load)，跨节点复用
+     * 的 mate 距离现在正确。
      */
     GameResult res = board_check_winner(b);
     if (res == RESULT_BLACK_WIN) {
@@ -649,7 +669,9 @@ static int alphabeta(Board *b, int ply, int depth_left, int alpha, int beta,
         if (best_score <= orig_alpha)      flag = TT_FLAG_UPPER;
         else if (best_score >= beta)       flag = TT_FLAG_LOWER;
         else                                flag = TT_FLAG_EXACT;
-        tt_put(b->zobrist_hash, depth_left, best_score, flag, best_r, best_c);
+        /* store-normalize mate scores to position-intrinsic distance */
+        tt_put(b->zobrist_hash, depth_left,
+               tt_score_for_store(best_score, ply), flag, best_r, best_c);
     }
 
     return best_score;

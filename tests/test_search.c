@@ -113,6 +113,28 @@ static void test_vcf_immediate_five(void) {
     ASSERT_TRUE(legal, "vcf: returns (7,2) or (7,7)");
 }
 
+static void test_search_mate_distance_short(void) {
+    /* 黑方活四，下一步必成 5。mate 距离应极短（root 出发 1 ply）。
+     * 验证 mate-by-ply + TT mate-distance 归一化：必须返回 mate-magnitude 分
+     * 且接近 SEARCH_INF（短 mate 高分）。若 TT 归一化坏了（用陈旧 ply 偏移
+     * 错算距离），分数会被错误缩水离 SEARCH_INF 更远。 */
+    Board b; board_init(&b);
+    b.cells[7][3] = BLACK;
+    b.cells[7][4] = BLACK;
+    b.cells[7][5] = BLACK;
+    b.cells[7][6] = BLACK;
+    b.move_count = 4;
+    b.side_to_move = BLACK;
+    b.forbid_enabled = false;
+
+    SearchResult r = search_best_move(&b, 4);
+    ASSERT_TRUE(IS_MATE_SCORE(r.score), "mate-dist: forced win returns mate-magnitude score");
+    ASSERT_TRUE(r.score > 0, "mate-dist: winning side (BLACK to move) gets positive mate");
+    /* 1-ply forced win → score 应非常接近 SEARCH_INF。宽松上界容忍搜索路径
+     * 差异，但能抓住"归一化把短 mate 错算成远 mate"的回归。 */
+    ASSERT_TRUE(r.score >= SEARCH_INF - 16, "mate-dist: immediate win scores as SHORT mate (near SEARCH_INF)");
+}
+
 static void test_search_mate_score_not_overflow_eval(void) {
     /* eval 量级（最多 ~1e6）远小于 mate threshold (1e8-1e4)，
      * 普通残局 search_best_move 不应误判为 mate（防止 P0-4 旧实现的虚假 mate）
@@ -133,6 +155,7 @@ int main(void) {
     test_search_finds_immediate_win();
     test_search_nodes_counted();
     test_vcf_immediate_five();
+    test_search_mate_distance_short();
     test_search_mate_score_not_overflow_eval();
     TEST_REPORT("test_search");
 }
