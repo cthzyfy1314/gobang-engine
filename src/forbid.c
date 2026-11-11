@@ -1,27 +1,35 @@
-/* src/forbid.c — Renju 黑方禁手判定（简化版） */
+/* src/forbid.c — Renju 黑方禁手判定（国规）
+ *
+ * 定义（均针对"假设在 (row,col) 落黑"之后的局面）：
+ *   五连   = 恰好 5 连。出现五连则无禁手（国规 9.2-c 五连优先）。
+ *   长连   = ≥6 连。
+ *   四     = 再落一手可成"恰好五连"的 4 子组合（填上后成长连的不算四）。
+ *            活四 _XXXX_ 两个成五点共享同一组 4 子，只算一个四。
+ *   活三   = 再落一手可成"活四"的 3 子组合，且那一手本身不是禁手。
+ *            活四 = _XXXX_ 且两个空端填上都恰好五连（空端外侧不能是黑子）。
+ *   四四   = 四的总数 ≥2（可在同一条线上）；三三 = 有活三的方向数 ≥2。
+ */
 #define _CRT_SECURE_NO_WARNINGS
+#include <string.h>
 #include "forbid.h"
 
 /* 4 个方向：横 / 竖 / 主斜 / 副斜 */
 static const int FORBID_DIRS[4][2] = { {0,1}, {1,0}, {1,1}, {1,-1} };
 
+typedef uint8_t Grid[BOARD_SIZE][BOARD_SIZE];
+
 /* 提取以 (cr,cc) 为中心、沿 (dr,dc) 方向的 11 长度居中线。
- * line[5] 为中心点，强制设为 BLACK（=1）以"假装"落黑。
- * 越界用 -1 表示。
- */
-static void extract_centered(const Board *b, int cr, int cc, int dr, int dc, int8_t line[11]) {
+ * line[5] 为中心点，强制设为 BLACK（=1）以"假装"落黑。越界用 -1 表示。 */
+static void extract_centered(Grid g, int cr, int cc, int dr, int dc, int8_t line[11]) {
     for (int k = -5; k <= 5; k++) {
-        if (k == 0) {
-            line[5] = 1;  /* center = 假定 BLACK */
-            continue;
-        }
         int r = cr + k * dr, c = cc + k * dc;
-        if (board_in_bounds(r, c)) line[k + 5] = (int8_t)b->cells[r][c];
-        else                        line[k + 5] = -1;
+        if (k == 0)                      line[5] = 1;
+        else if (board_in_bounds(r, c))  line[k + 5] = (int8_t)g[r][c];
+        else                             line[k + 5] = -1;
     }
 }
 
-/* 包含 center 的连续 BLACK 段长度（向左右扩展直到非 BLACK） */
+/* 包含 center 的连续 BLACK 段长度 */
 static int center_run_length(const int8_t *line) {
     int len = 1;
     for (int i = 4; i >= 0; i--) { if (line[i] == 1) len++; else break; }
@@ -29,24 +37,13 @@ static int center_run_length(const int8_t *line) {
     return len;
 }
 
-/* 统计该方向（line）上经过 center 的"四"棋型 *数量*（活四或冲四，含跳冲四）。
- *
- * 同方向可能存在多个独立的"四"（threat 位置不同），都要计入。
- * 用 threat position（5-window 内 empty 的位置）去重，避免同一个 four 被多个
- * 重叠 5-window 重复算（典型：相邻两个 window 共享 4 个 black 子，threat 位置相同）。
- *
- * 这个 count 让 forbid_check_black 能识别"同一方向上的双四禁手"。
- * 老版本返回 boolean 漏掉这种 case（2026-05-16 修复）。
- */
+/* 该方向上经过 center 的"四"的数量。
+ * 5-window 内 4 黑 1 空，且填空后恰好五连（window 两侧紧邻不能是黑子，否则成长连）。
+ * 用 4 子位置 bitmask 去重：活四的两个 window 共享同一组 4 子 → 1 个四；
+ * X_XXX_X 之类 4 子组合不同 → 2 个四（同线四四）。 */
 static int count_fours_through_center(const int8_t *line) {
-    /* 用 4 个 black 子位置组合（bitmask）作为 four 的指纹去重：
-     *   活四 _XXXX_：相邻 2 个 5-window 共享同一组 4 子 → 1 个 four
-     *   跳冲四组合：4 子位置不同 → distinct fours
-     * 老版按 threat 位置去重把活四误算 2 → 引起 single_four 测试回归。
-     */
-    int seen_masks[8] = {0};
+    int seen_masks[8];
     int n_seen = 0;
-    int count = 0;
     for (int i = 1; i <= 5; i++) {
         int blacks = 0, empties = 0, invalid = 0;
         int mask = 0;
@@ -58,144 +55,83 @@ static int count_fours_through_center(const int8_t *line) {
         }
         if (invalid) continue;
         if (blacks != 4 || empties != 1) continue;
+        if (line[i - 1] == 1) continue;                  /* 填上成长连，不是四 */
+        if (i + 5 <= 10 && line[i + 5] == 1) continue;
 
         int duplicate = 0;
         for (int s = 0; s < n_seen; s++) {
             if (seen_masks[s] == mask) { duplicate = 1; break; }
         }
-        if (!duplicate) {
-            seen_masks[n_seen++] = mask;
-            count++;
-        }
+        if (!duplicate) seen_masks[n_seen++] = mask;
     }
-    return count;
+    return n_seen;
 }
 
-/* 真活三判定：以 line 居中（center=line[5]=BLACK 假定）为前提，
- * 是否存在经过 center 的"真活三"——即可在 1 手内变成"真活四"（连续 4 子双端开放）。
- *
- * 算法（概念上的两步，实现为单层模拟）：
- *   1. 枚举本方向上经过 center 的所有"3 子黑棋组合"（含跳形）
- *      —— 形式 `_XXX_` 与 `_XX_X_` / `_X_XX_`
- *   2. 对每个形式活三组合，尝试在它的"延伸位"再落一手 BLACK
- *      —— 即 6 长度窗口内的两个 _ 位置之一，以及（对连续 _XXX_）内部不需要填
- *      —— 实际上：对每种形式，可以填的"成四位"是固定的几个 slot
- *   3. 落第二手后，调用 line_has_true_open_four 看是否形成 4 连双端开放
- *   4. 任一延伸位可形成 → 真活三
- *
- * 简化实现：遍历所有 line 上的 EMPTY 位置 (line[k]==0)，模拟在 k 处放 BLACK，
- *           看新 line 上是否出现真活四 + center 仍在该 four 中。这样省去枚举形式。
- */
-static int is_true_open_three_through_center(const int8_t *line) {
-    int len = 11;
-    /* 必须先满足"形式活三"的存在（中心方向上的形式 _XXX_ / _XX_X_ / _X_XX_），
-     * 否则即使有可成四的延伸位，也不是经过 center 的活三威胁。
-     * 沿用旧的 count_open_threes_through_center 形式检测：找到 ≥1 个形式三再做延伸验证。
-     */
-    int has_formal_three = 0;
-    /* 形式 1: 连续活三 */
-    for (int i = 0; i <= len - 5; i++) {
-        if (line[i] == 0 && line[i+1] == 1 && line[i+2] == 1 && line[i+3] == 1
-            && line[i+4] == 0) {
-            if (5 < i + 1 || 5 > i + 3) continue;
-            int outer_left  = (i - 1 >= 0)  ? line[i - 1]  : -1;
-            int outer_right = (i + 5 < len) ? line[i + 5] : -1;
-            if (outer_left == 1 || outer_left == -1) continue;
-            if (outer_right == 1 || outer_right == -1) continue;
-            has_formal_three = 1;
-            break;
-        }
-    }
-    /* 形式 2: 跳活三 */
-    if (!has_formal_three) {
-        for (int i = 0; i <= len - 6; i++) {
-            int8_t a = line[i], f = line[i+5];
-            if (a != 0 || f != 0) continue;
-            int8_t b = line[i+1], c = line[i+2], d = line[i+3], e = line[i+4];
-            int hit = 0;
-            if (b==1 && c==1 && d==0 && e==1) hit = 1;        /* _XX_X_ */
-            else if (b==1 && c==0 && d==1 && e==1) hit = 1;   /* _X_XX_ */
-            if (!hit) continue;
-            if (5 < i + 1 || 5 > i + 4) continue;
-            has_formal_three = 1;
-            break;
-        }
-    }
-    if (!has_formal_three) return 0;
-
-    /* 延伸验证：尝试每个 EMPTY 位置 (line[k]==0) 落 BLACK，看是否出现真活四
-     * 且新形成的 4 连包含 center=5（保证是"经过 center 的活四"，而非旁路活四）。
-     */
-    int8_t sim[11];
-    for (int k = 0; k < len; k++) {
+/* 返回 bitmask：line 上哪些空位 k 落黑后，形成经过 center 的活四
+ * （_XXXX_，两空端外侧都不是黑子）。非 0 即该方向存在"几何活三"；
+ * 是否为真活三还需调用方验证成四点本身合法。 */
+static int open_four_points_through_center(const int8_t *line) {
+    int pts = 0;
+    for (int k = 2; k <= 8; k++) {
         if (line[k] != 0) continue;
-        if (k == 5) continue;  /* center 已是 BLACK，跳过 */
-        for (int j = 0; j < len; j++) sim[j] = line[j];
-        sim[k] = 1;
-
-        /* 检查 sim 上是否有真活四 _XXXX_，且该 4 子段包含 center=5 */
-        for (int i = 0; i + 5 <= len; i++) {
-            if (sim[i] != 0) continue;
-            if (sim[i+1] != 1 || sim[i+2] != 1 || sim[i+3] != 1 || sim[i+4] != 1) continue;
-            if (i + 5 >= len) continue;
-            if (sim[i + 5] != 0) continue;
-            /* 4 子段 [i+1..i+4] 必须包含 center=5 */
-            if (5 < i + 1 || 5 > i + 4) continue;
-            return 1;
+        int8_t s[11];
+        memcpy(s, line, 11);
+        s[k] = 1;
+        for (int i = 1; i <= 4; i++) {          /* 4 子占 i+1..i+4，必含 center=5 */
+            if (k < i + 1 || k > i + 4) continue;
+            if (s[i] != 0 || s[i + 5] != 0) continue;
+            if (s[i+1] != 1 || s[i+2] != 1 || s[i+3] != 1 || s[i+4] != 1) continue;
+            if (s[i - 1] == 1) continue;                    /* 该端填上成长连 */
+            if (i + 6 <= 10 && s[i + 6] == 1) continue;
+            pts |= 1 << k;
         }
     }
-    return 0;
+    return pts;
 }
 
-/* 统计该方向（line）上经过 center 的"真活三"数。
- * 真活三 = 1 手内可形成"真活四"（连续 4 子双端开放）的活三。
- *
- * P1-2: 旧实现只做形式判定（`_XXX_` / `_XX_X_` / `_X_XX_`），现升级为「落一手」
- *       的单层模拟：遍历 line 上每个空位放一手 BLACK，看是否成真活四且 center 仍在其中。
- *       （非递归——只多落一子验证，不再向下展开。）
- *
- * 注意：同一方向上通常 ≤ 1 真活三（多个形式三共享 center 极罕见），
- *       返回 0 / 1 即可。
- */
-static int count_open_threes_through_center(const int8_t *line) {
-    return is_true_open_three_through_center(line) ? 1 : 0;
-}
+/* 在 g 上判定 (row,col) 落黑是否禁手。g[row][col] 必须为 EMPTY。
+ * 递归：活三的成四点必须自身合法（每层多落一子，深度天然有界）。 */
+static ForbidType check_on_grid(Grid g, int row, int col) {
+    int8_t line[4][11];
+    int skip[4] = {0};
+    int five = 0, overline = 0, fours = 0, three_dirs = 0;
 
+    for (int d = 0; d < 4; d++) {
+        extract_centered(g, row, col, FORBID_DIRS[d][0], FORBID_DIRS[d][1], line[d]);
+        int run = center_run_length(line[d]);
+        if (run == 5)      { five++;     skip[d] = 1; }
+        else if (run >= 6) { overline++; skip[d] = 1; }
+    }
+    if (five) return FORBID_NONE;            /* 国规 9.2-c：五连优先 */
+    if (overline) return FORBID_OVERLINE;
+
+    for (int d = 0; d < 4; d++)
+        if (!skip[d]) fours += count_fours_through_center(line[d]);
+    if (fours >= 2) return FORBID_DOUBLE_FOUR;
+
+    for (int d = 0; d < 4; d++) {
+        if (skip[d]) continue;
+        int pts = open_four_points_through_center(line[d]);
+        if (!pts) continue;
+        int ok = 0;
+        g[row][col] = BLACK;
+        for (int k = 2; k <= 8 && !ok; k++) {
+            if (!(pts & (1 << k))) continue;
+            int r = row + (k - 5) * FORBID_DIRS[d][0];
+            int c = col + (k - 5) * FORBID_DIRS[d][1];
+            if (check_on_grid(g, r, c) == FORBID_NONE) ok = 1;
+        }
+        g[row][col] = EMPTY;
+        three_dirs += ok;
+        if (three_dirs >= 2) return FORBID_DOUBLE_THREE;
+    }
+    return FORBID_NONE;
+}
 
 ForbidType forbid_check_black(const Board *b, int row, int col) {
     if (!board_in_bounds(row, col)) return FORBID_NONE;
     if (b->cells[row][col] != EMPTY) return FORBID_NONE;
-
-    int five_count = 0;
-    int overline_count = 0;
-    int total_fours = 0;     /* 跨所有方向累加"四"的总数（同方向多个也算）*/
-    int three_dirs = 0;
-
-    for (int d = 0; d < 4; d++) {
-        int8_t line[11];
-        extract_centered(b, row, col, FORBID_DIRS[d][0], FORBID_DIRS[d][1], line);
-
-        int run = center_run_length(line);
-        if (run == 5) {
-            five_count++;
-            continue;  /* 五连方向不再分析其他棋型 */
-        }
-        if (run >= 6) {
-            overline_count++;
-            continue;
-        }
-
-        /* 非五连方向：累加四的个数 / 累加方向上"三"的有/无 */
-        total_fours += count_fours_through_center(line);
-        if (count_open_threes_through_center(line) >= 1) three_dirs++;
-    }
-
-    /* 国规 9.2-c：五连优先 */
-    if (five_count > 0) return FORBID_NONE;
-
-    if (overline_count > 0) return FORBID_OVERLINE;
-    if (total_fours >= 2)  return FORBID_DOUBLE_FOUR;
-    if (three_dirs >= 2)   return FORBID_DOUBLE_THREE;
-
-    return FORBID_NONE;
+    Grid g;
+    memcpy(g, b->cells, sizeof g);
+    return check_on_grid(g, row, col);
 }

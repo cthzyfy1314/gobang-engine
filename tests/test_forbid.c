@@ -286,43 +286,19 @@ static void test_true_open_three_vs_formal(void) {
               "true_open_three: formal _XXX_ blocked by outer-outer WHITE -> not forbidden");
 }
 
-/* === P1-3: 贴边 _XXX_ 边界假阳性 ===
- * 落 (0,2) 黑后横向贴边 line=[B,B,B,_,?,?,?,...]，center=col 2 是 B。
- *   line 居中坐标：center=line[5]=(0,2)=B(假定)。
- *   k=-2 → (0,0)=B, k=-1 → (0,1)=B, k=0 → center=B, k=1 → (0,3)=_,
- *   k=-3..k=-5 越界 → line[0..2]=-1
- *   即 line = [-1,-1,-1,1,1,1,0,?,?,?,?]，
- *   形式 _XXX_ 在 i=2: line[2]=-1, line[3..5]=B, line[4]=0 → 但 line[2]≠0 → 不匹配。
- *   再考虑 i=3: line[3..7]=1,1,1,0,? → line[3]≠0 → 不匹配。
- *   贴边 BBB_ 在形式判定中本来就不是 _XXX_（左侧无 _）。
- *
- * 真正的"贴边假阳性"场景：(0,0)..(0,2)=_,B,B + center=(0,3)=B → 形式 _XXX_，左端是真 _，
- *   但向左延伸 _XXXX_ 需要 (0,-1)=越界 → outer_left = -1。
- *   老版本 outer_left==1 才排除，-1 不排除 → 形式三仍计入 → 假阳性。
- *   新 P1-3 修复后 outer_left == -1 也排除。
- *
- * 测试：落 (0,3) 黑，横向 (0,1)(0,2)=B + 形式 _XXX_ 在 col 1..3。
- *       但 (0,0) 是 _，左外为越界。再加竖向相同形态 (1,3)(2,3)=B，竖向边界类似。
- *       双方向都贴边 → 老版双三假阳性；新版应 NONE。
+/* 贴边：落 (0,3)。
+ *   横向 (0,1)(0,2)(0,3) = |_XXX___：落 (0,4) 得 _XXXX_（(0,0)、(0,5) 皆空）→ 是活三。
+ *   竖向 (0,3)(1,3)(2,3) = |XXX__：上端被边界堵死，成不了活四 → 不是活三。
+ *   只有一个活三 → 非禁手。
+ * （旧注释认为"空端紧贴棋盘边的 _XXX_ 不算活三"，这是错的，见下方
+ *   test_edge_open_three_is_real。）
  */
 static void test_edge_open_three_no_false_positive(void) {
     Board b; board_init(&b);
-    /* 横向 (0,1)(0,2)=B，落 (0,3)，(0,0)=_, (0,4)=_ */
     put(&b, 0, 1, BLACK);
     put(&b, 0, 2, BLACK);
-    /* 竖向 (1,3)(2,3)=B，落 (0,3)，(3,3)=_, 向上越界 */
     put(&b, 1, 3, BLACK);
     put(&b, 2, 3, BLACK);
-    /* (0,3) center：横 line center=col 3
-     *   line=[-1,-1,-1,-1,1,1,0,0,0,0,0]: center=line[5]=B(假定)，左 line[3]=B(0,2), line[4]=?(0,1)=B
-     *   wait 重新: k=-5..5 对应 col=-2..8。col=-2,-1 越界(-1), col=0=_, col=1=B, col=2=B, col=3=center=B, col=4..8=_
-     *   line[0]=-1, line[1]=-1, line[2]=0(col 0), line[3]=1(col 1), line[4]=1(col 2),
-     *   line[5]=1(center), line[6..10]=0(col 4..8)
-     *   形式 _XXX_ 在 i=2: line[2]=0, line[3..5]=1,1,1, line[6]=0 → ✓
-     *   center 5 ∈ [3..5] ✓; outer_left=line[1]=-1 → 新版排除；outer_right=line[6]=0 → OK
-     *   新版排除 → 0 个形式三 → 真三 0
-     * 类似竖方向。两方向都因贴边被排除 → 非双三 → FORBID_NONE
-     */
     ASSERT_EQ(forbid_check_black(&b, 0, 3), FORBID_NONE,
               "edge_open_three: _XXX_ adjacent to board edge -> not true open three");
 }
@@ -409,6 +385,64 @@ static void test_midgame_double_three_available_but_play_elsewhere(void) {
               "midgame: black plays elsewhere (0,0) -> NONE despite (7,7) being forbidden");
 }
 
+/* === 2026-11 审计回归：四 / 活三必须按"恰好五连"定义 === */
+
+/* 记谱辅助：列 'A'+c，行 15-r */
+static void putn(Board *b, const char *list, int color) {
+    const char *p = list;
+    while (*p) {
+        while (*p == ' ') p++;
+        if (!*p) break;
+        int c = *p++ - 'A', n = 0;
+        while (*p >= '0' && *p <= '9') n = n * 10 + (*p++ - '0');
+        b->cells[15 - n][c] = (uint8_t)color;
+    }
+}
+static ForbidType chk(const char *blacks, const char *whites, const char *mv) {
+    Board b; board_init(&b);
+    putn(&b, blacks, BLACK);
+    putn(&b, whites, WHITE);
+    int c = mv[0] - 'A', n = 0;
+    for (const char *p = mv + 1; *p; p++) n = n * 10 + (*p - '0');
+    return forbid_check_black(&b, 15 - n, c);
+}
+
+static void test_audit_overline_completion_is_not_four(void) {
+    /* XXX_XX：填 H8 成六连，线上没有四 */
+    ASSERT_EQ(chk("E8 F8 I8 J8", "", "G8"), FORBID_NONE,
+              "XXX_XX: filling gap gives overline -> no four");
+    /* _XXXX_X：只有 D8 一个成五点，是一个冲四不是两个 */
+    ASSERT_EQ(chk("E8 F8 G8 J8", "", "H8"), FORBID_NONE,
+              "_XXXX_X: single four, not double-four");
+    ASSERT_EQ(chk("A8 C8 D8 F8", "", "B8"), FORBID_NONE,
+              "edge XXXX_X: single four");
+}
+
+static void test_audit_pseudo_open_three(void) {
+    /* 横向 X_XX_X 填 H8 后 E8 端成长连 → 不是活三；竖向是活三 → 只有一个三 */
+    ASSERT_EQ(chk("D8 G8 I8 F10 F9", "", "F8"), FORBID_NONE,
+              "three whose straight four would have an overline end is not open");
+    /* 横向冲四 + 竖向活三 = 合法四三 */
+    ASSERT_EQ(chk("B8 C8 F8 H8 E10 E9", "", "E8"), FORBID_NONE,
+              "four-three must not be reported as double-three");
+    ASSERT_EQ(chk("F8 G8 K8 H10 H9", "D8", "H8"), FORBID_NONE,
+              "_XXX_ with far stone making overline end");
+}
+
+static void test_edge_open_three_is_real(void) {
+    /* |_XXX__：落 E8 得 _XXXX_，两端皆空 → 真活三；竖向也是活三 → 三三 */
+    ASSERT_EQ(chk("B10 B9 C8 D8", "", "B8"), FORBID_DOUBLE_THREE,
+              "open three next to left edge counts");
+    ASSERT_EQ(chk("G14 H14 I13 I12", "", "I14"), FORBID_DOUBLE_THREE,
+              "open three next to top edge counts");
+}
+
+static void test_three_needs_legal_four_point(void) {
+    /* KNOWN_BUGS #36：斜向三唯一的成活四点 I5 自身是四四禁手 → 不是活三 */
+    ASSERT_EQ(chk("J6 I4 K4 G3 I2 I1", "", "H4"), FORBID_NONE,
+              "three whose only four-point is forbidden is not an open three");
+}
+
 int main(void) {
     test_overline_horizontal();
     test_five_only_no_forbid();
@@ -430,5 +464,9 @@ int main(void) {
     test_midgame_double_three();         /* 中盘双三 */
     test_midgame_overline_seven();       /* 中盘 7 长连 */
     test_midgame_double_three_available_but_play_elsewhere(); /* 双三可用但落别处 */
+    test_audit_overline_completion_is_not_four();
+    test_audit_pseudo_open_three();
+    test_edge_open_three_is_real();
+    test_three_needs_legal_four_point();
     TEST_REPORT("test_forbid");
 }
