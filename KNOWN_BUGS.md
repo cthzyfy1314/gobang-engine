@@ -184,7 +184,15 @@ move generator.
 
 ## #36 — True open-three recursion: geometric-only, no legality check
 
-**Status:** open. Identified by 国规 audit (2026-05-19).
+**Status:** FIXED (2026-11-11). `forbid.c` rewritten around the exact-five
+definitions: a four must complete to *exactly* five, an open three must reach a
+straight four whose both ends complete to exactly five, and the four-making
+point must itself be legal (recursive). Same change fixes three related
+mis-detections found by differential fuzzing against an independent rules
+oracle (false double-four on `XXX_XX` / `_XXXX_X`, false double-three on
+`X_XX_X`-type lines, missed open three next to the board edge). Regression
+tests: `tests/test_forbid.c` (`test_audit_*`, `test_edge_open_three_is_real`,
+`test_three_needs_legal_four_point`). Original report kept below.
 
 `is_true_open_three_through_center` (`src/forbid.c:89-148`) verifies
 that the candidate three could form a geometric `_XXXX_` via any
